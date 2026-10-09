@@ -71,18 +71,45 @@ variable `three_score` in the filter.
   reads starting within 10 nt of the peak, >= 0.5). `.test`: 25 passing loci, 9 of the 12 found by
   overlap blocks; the 3 lost have 0-3 reads per sample within +-2 nt of their 5' end.
 
+## Where we stopped (2026-10-09)
+
+- Module B step 1 is done and pushed (`834a2b9`, CI green): `regions`, `decoys`, `sites`
+  subcommands, rule `targets` (run separately from module A, after reviewing candidates).
+  Target sets use the general seed logic (`ago`) by default; `mode: bacterial` is opt-in and
+  only prints "not implemented" for now. The simulator plants 15 seed sites in nuclear 3'UTRs;
+  `evaluate` finds 15/15. Site-count FDR is ~1 by nature (a seed match alone is not a target):
+  ranking needs step 2.
+- RNA tools are installed in a separate env `smithhunter2-rna` (IntaRNA 3.4.1, RNAhybrid 2.1.2,
+  ViennaRNA 2.7.2; recipe `workflow/envs/rna.yaml`). Installing them into `smithhunter2`
+  (Python 3.14) silently gave IntaRNA 1.2.5 and ViennaRNA 2.4.7 (py27), so they were removed.
+- Pushing: `git push git@github.com:die-lab/SmithHunter2.git main` (SSH; the HTTPS remote has no
+  credentials). Repo-local `user.email` is thepokemonmuia@gmail.com (the other address is blocked
+  by GitHub email privacy). `gh` is not installed: CI status via
+  `curl https://api.github.com/repos/die-lab/SmithHunter2/actions/runs?per_page=3`.
+
 ## Next steps
 
-1. Run on a full-size real library to tune thresholds, then legacy comparison with v0 output on the same data.
-2. Module B (design in `docs/module_b_design.md`). Step 1 done: `regions`, `decoys`, `sites`
-   subcommands and rule `targets`; the simulator plants 15 seed sites in nuclear 3'UTRs and
-   `evaluate` checks them (15/15). Site-count FDR is ~1 by nature: ranking needs step 2
-   (IntaRNA, RNAhybrid with RNAcalibrate, q-values from decoys)., then HTML report, then optional tools (MINTmap, Kraken2 on unmapped
-   reads, ShortStack cross-check, AGO-CLIP chimeras).
+1. Single environment again: pin Python in `environment.yml` (e.g. `>=3.10,<3.14`) and add
+   `intarna>=3.4`, `rnahybrid`, `viennarna>=2.6` with minimum versions; check with a dry solve
+   (`mamba env create --dry-run -f environment.yml`). If it solves, drop `smithhunter2-rna`.
+2. Module B step 2 (`docs/module_b_design.md` sections 4.2-4.3): wrap IntaRNA (whole region for
+   accessibility, `--tRegion` on the site, seed pinned to guide 2-8) and RNAhybrid (window around
+   the site, `-f` matching the seed, `-d xi,theta` from RNAcalibrate on the same regions); score
+   real and decoy sites; q-values with `targets/fdr.py:qvalues`; `support` column. Add stored
+   tool outputs as parser test fixtures; extend the simulation check.
+3. Then: precursor folding (step 3), bacterial mode (step 4), report.
+4. Module A: run on a full-size real library to tune thresholds, then legacy comparison with v0.
+   Optional tools later (MINTmap, Kraken2 on unmapped reads, ShortStack cross-check, AGO-CLIP).
 
 ## Commands
 
 ```bash
+source ~/miniforge3/etc/profile.d/conda.sh && conda activate smithhunter2
 pytest                                            # unit tests (repo root)
-cd .test && snakemake -s ../workflow/Snakefile --cores 2   # integration test
+cd .test && snakemake -s ../workflow/Snakefile --cores 2   # integration test (module A)
+# simulation benchmark, modules A and B (outside the repo, e.g. in a scratch dir):
+PYTHONPATH=src python -m smithhunter simulate --outdir /tmp/sim
+cd /tmp/sim && snakemake -s <repo>/workflow/Snakefile --cores 2 && \
+  snakemake -s <repo>/workflow/Snakefile --cores 2 targets && \
+  PYTHONPATH=<repo>/src python -m smithhunter evaluate
 ```
