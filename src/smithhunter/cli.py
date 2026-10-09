@@ -86,6 +86,20 @@ def cmd_discover(args):
     print(f"{len(rows)} loci, {sum(r['pass'] for r in rows)} passing filters")
 
 
+def cmd_simulate(args):
+    from .simulate import Params, simulate
+    params = Params(**{k: v for k, v in vars(args).items() if k in Params.__dataclass_fields__})
+    sim = simulate(params)
+    reads = sum(sum(s.counts) for s in sim.sources)
+    print(f"{len(sim.samples)} samples, {reads} reads, {len(sim.sources)} sources written to "
+          f"{args.outdir}")
+
+
+def cmd_evaluate(args):
+    from .evaluate import run
+    print(run(args.truth, args.results, args.out), end="")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="smithhunter", description=__doc__)
     p.add_argument("--version", action="version", version=__version__)
@@ -141,6 +155,30 @@ def main(argv=None):
     s.add_argument("--reads", required=True)
     s.add_argument("--fasta", required=True)
     s.set_defaults(func=cmd_discover)
+
+    s = sub.add_parser("simulate", help="simulate a small RNA library with known truth")
+    s.add_argument("--outdir", default="sim")
+    s.add_argument("--seed", type=int, default=1)
+    s.add_argument("--samples", type=int, default=3)
+    s.add_argument("--reads", type=int, default=200_000, help="mean reads per sample")
+    s.add_argument("--read-length", type=int, default=75)
+    s.add_argument("--paired", action="store_true")
+    s.add_argument("--mito-length", type=int, default=16_000)
+    s.add_argument("--nuclear-length", type=int, default=2_000_000)
+    s.add_argument("--bacterium-length", type=int, default=300_000)
+    s.add_argument("--srnas", type=int, default=30, help="ordinary mitochondrial smallRNAs")
+    s.add_argument("--degradation", type=float, default=0.08,
+                   help="fraction of reads from mitochondrial rRNA and mRNA degradation")
+    s.add_argument("--error-rate", type=float, default=0.002)
+    s.add_argument("--max-hits", type=int, default=50)
+    s.add_argument("--ambiguous", default="report")
+    s.set_defaults(func=cmd_simulate)
+
+    s = sub.add_parser("evaluate", help="compare results of a simulated run with its truth")
+    s.add_argument("--truth", default="truth")
+    s.add_argument("--results", default="results")
+    s.add_argument("--out", default="evaluation")
+    s.set_defaults(func=cmd_evaluate)
 
     args = p.parse_args(argv)
     args.func(args)

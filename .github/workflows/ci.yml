@@ -46,3 +46,37 @@ jobs:
             .test/results/origin/*.tsv
             .test/results/collapsed/libraries.tsv
             .test/results/logs
+
+  simulation:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+      - name: Clean library (no degradation) - every outcome must match the truth
+        run: |
+          export PYTHONPATH=$PWD/src
+          python -m smithhunter simulate --outdir sim_clean --reads 100000 --degradation 0
+          cd sim_clean
+          snakemake -s ../workflow/Snakefile --cores 2
+          python -m smithhunter evaluate | tee summary.txt
+          grep -q "outcome as expected: .* (100%)" summary.txt
+      - name: Library with degradation (informative, does not fail)
+        run: |
+          export PYTHONPATH=$PWD/src
+          python -m smithhunter simulate --outdir sim_default --reads 100000
+          cd sim_default
+          snakemake -s ../workflow/Snakefile --cores 2
+          python -m smithhunter evaluate
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: simulation-evaluation
+          path: |
+            sim_*/evaluation
+            sim_*/truth

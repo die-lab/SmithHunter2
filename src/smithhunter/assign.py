@@ -84,11 +84,15 @@ def fold_circular(hit: Hit, contig: Contig) -> Hit:
 
 
 def group_hits(sam_lines: Iterable[str]) -> Iterator[tuple[str, list[Hit]]]:
-    """Group consecutive records by read; bowtie must run with ``--reorder``."""
+    """Group consecutive records by read.
+
+    bowtie writes all the alignments of a read as one block, also with several threads.
+    ``--reorder`` is not needed (and bowtie 1.3.1 deadlocks with ``-p`` > 1 and ``--reorder``).
+    """
     seen = set()
     for read_id, items in groupby(parse_sam(sam_lines), key=lambda x: x[0]):
         if read_id in seen:
-            raise ValueError(f"read {read_id} is not contiguous in the SAM; run bowtie with --reorder")
+            raise ValueError(f"read {read_id} is not contiguous in the SAM; were alignments sorted by position?")
         seen.add(read_id)
         yield read_id, [hit for _, hit in items]
 

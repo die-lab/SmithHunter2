@@ -29,7 +29,7 @@ assigned to their best genome; ties between genomes are `ambiguous` and handled 
 - fastp for SE and PE. PE: keep R1, R2 only for overlap correction (`--merge` needs >= 30 bp
   overlap and lost 84% of the ~31 nt inserts in the test data). Collapse identical reads,
   align unique sequences once.
-- bowtie 1, `-v 1 -k 50 -m 50 --best --strata --reorder`, on one combined reference
+- bowtie 1, `-v 1 -k 50 -m 50 --best --strata` (no `--reorder`: bowtie 1.3.1 deadlocks with it and `-p` > 1), on one combined reference
   (contigs named `genome|contig`). Replaces v0's bowtie2 cascade mito → nuclear → mito, which
   dropped any read touching the nuclear genome even when it fit the mitochondrion better.
 - Loci by genomic coordinates and strand (replaces v0 vsearch clustering by sequence identity).
@@ -57,15 +57,20 @@ variable `three_score` in the filter.
 
 - Module A implemented: `collapse`, `build-ref`, `assign`, `discover` subcommands
   (`python -m smithhunter`), Snakemake rules in `workflow/rules/`.
-- Written on a machine without Python or Linux tools: verified only through GitHub Actions
-  (`.github/workflows/ci.yml`: unit tests + full run on `.test`). Check the latest CI run.
+- Verified on the server (2026-10-09): env `smithhunter2` in `~/miniforge3`, `.test` runs end to end.
+  The `.test` reads are random reads from a real sample: they only show that the workflow runs.
+- `simulate` / `evaluate` subcommands: simulated library with known truth (isomiRs, non-templated
+  tails, errors, degradation, tRFs, NUMTs, origin-spanning locus, close/overlapping pairs, SNP,
+  heteroplasmy). Without degradation 44/44 outcomes match (CI checks this). With the default
+  degradation (8% of reads) about a third of mitochondrial smallRNAs are chained with degradation
+  fragments into gene-sized loci: locus definition by overlap is not robust.
 
 ## Next steps
 
-1. Run `.test` on the server; look at `origin_summary.tsv` and `loci.tsv` with the maintainer.
-2. Simulated reads with known smallRNAs, tRNA fragments and NUMTs inserted, to measure recovery.
-3. Legacy comparison with v0 output on the same data.
-4. Module B (targets), then HTML report, then optional tools (MINTmap, Kraken2 on unmapped
+1. Locus definition robust to degradation background (to agree with the maintainer), measured
+   with `simulate`/`evaluate`.
+2. Legacy comparison with v0 output on the same data.
+3. Module B (targets), then HTML report, then optional tools (MINTmap, Kraken2 on unmapped
    reads, ShortStack cross-check, AGO-CLIP chimeras).
 
 ## Commands

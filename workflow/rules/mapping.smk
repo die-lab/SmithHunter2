@@ -31,7 +31,8 @@ rule bowtie_index:
 
 
 # --best --strata -k K -m K: report every equally best alignment, and set aside reads
-# with more than K of them. --reorder keeps the alignments of a read together.
+# with more than K of them. bowtie writes the alignments of a read together; --reorder is
+# not used because bowtie 1.3.1 deadlocks with it when running on more than one thread.
 rule align:
     input:
         reads=OUT / "collapsed/unique.fa",
@@ -49,7 +50,7 @@ rule align:
         "../envs/bowtie.yaml"
     shell:
         "bowtie -f -v {params.mismatches} -k {params.max_hits} -m {params.max_hits} "
-        "--best --strata --reorder -p {threads} --sam --max {output.excess} "
+        "--best --strata -p {threads} --sam --max {output.excess} "
         "{input.index}/combined {input.reads} 2> {log} | gzip -c > {output.sam}; "
         "touch {output.excess}"
 

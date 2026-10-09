@@ -1,80 +1,230 @@
 # SmithHunter2
 
-Discovery of small RNA loci from small RNA-seq data, across all the genomes present in a
-sample (nuclear, mitochondrial, bacterial, ...). You declare every genome and choose which
-ones to study; reads are assigned to the genome they align to best, reads from the other
-genomes are counted and set aside, and reads that fit more than one genome are reported
-separately.
+**Find the small RNAs produced by every genome in your sample.**
+
+Small RNA-seq libraries mix reads from several genomes: the nuclear and mitochondrial
+genomes of the organism, plastids, symbionts, parasites, contaminants. SmithHunter2
+lets you declare all of them, choose which ones you want to study, and finds small RNA
+loci on those genomes while the others compete for the reads.
+
+- Every read is assigned to the genome it fits **best**, not to the first genome it
+  happens to fit. A read from the mitochondrion is not lost because a NUMT in the
+  nuclear genome resembles it, and nuclear reads do not inflate mitochondrial loci.
+- Reads that fit two genomes equally well are reported as **ambiguous** and handled by
+  a policy you choose.
+- Circular genomes are handled natively: loci across the origin are found as one locus.
+- Loci are defined on genomic coordinates and strand, quantified per sample, scored for
+  the precision of their 5' and 3' ends, and annotated with your GFF3.
+- A built-in **simulator** writes a realistic library with known truth, so you can see
+  what the pipeline recovers before trusting it on real data.
 
 SmithHunter2 is a rewrite of [SmithHunter](https://github.com/ESZlab/SmithHunter)
-(Marturano, Carli et al., BMC Bioinformatics 25:286, 2024), which identifies candidate
-smithRNAs (small mitochondrial highly-transcribed RNAs) and their nuclear targets.
+(Marturano, Carli et al., *BMC Bioinformatics* 25:286, 2024), written to find smithRNAs
+(small mitochondrial highly transcribed RNAs) but no longer limited to mitochondria.
 
-> **Status: early development.** Module A (discovery) is implemented. Module B (target
-> prediction) is not yet. See [CLAUDE.md](CLAUDE.md) for the design and the roadmap.
+> **Status: early development.** Module A (small RNA discovery) works and is tested.
+> Module B (target prediction) is being designed and is not yet available.
 
-## What module A does
+## How it works
 
-1. **Trimming** with fastp. For paired-end data R1 is kept and R2 is used for overlap-based
-   error correction.
-2. **Collapsing** of identical reads across samples; each unique sequence is aligned once.
-3. **Competitive alignment** with bowtie 1 (`--best --strata`) on one reference holding all
-   declared genomes. Circular genomes are extended so reads across the origin align.
-4. **Origin assignment**: `assigned` (one focus genome), `excluded`, `ambiguous`,
-   `too_many_hits`, `unmapped`, with per-sample and per-length summaries.
-5. **Loci**: overlapping alignments on the same strand, quantified per sample as counts, RPM
-   on the library and RPM on the genome. A locus passes when enough samples reach both a
-   minimum RPM and a minimum read count.
-6. **End precision**: 5' and 3' end scores, after `sharp_smith.R` from SmithHunter.
-7. **Annotation** with the GFF3 of each genome (e.g. MITOS2 for mitochondria).
+```
+FASTQ (SE or PE)
+  │ fastp: adapter and quality trimming (PE: R2 only corrects R1 by overlap)
+  ▼
+collapse identical reads across samples ── each unique sequence is aligned once
+  │
+  ▼
+bowtie 1 on ONE reference holding all genomes (-v 1, --best --strata, up to 50 hits)
+  │
+  ▼
+origin of each read: assigned │ excluded │ ambiguous │ too_many_hits │ unmapped
+  │
+  ▼  focus genomes only
+loci = overlapping alignments on the same strand
+  │ counts and RPM per sample, expression filter
+  │ 5' / 3' end scores (after SmithHunter's sharp_smith)
+  │ annotation with GFF3
+  ▼
+loci.tsv + candidates.fasta
+```
 
-## Running
+Each genome gets a **role**:
 
-Requirements: Linux, conda/mamba.
+| role | what happens to its reads |
+|---|---|
+| `focus` | loci are defined, quantified, scored and annotated |
+| `exclude` | the genome competes for reads, which are counted and then set aside |
+
+A read is `assigned` when all its best alignments fall in one focus genome,
+`excluded` when they fall only in exclude genomes, and `ambiguous` when they fall in a
+focus genome and in another genome. The `ambiguous` setting decides what happens to
+ambiguous reads: `report` (listed, not used for loci), `discard`, or `split` (shared
+among all best alignments). Within one genome, reads with several equally good
+alignments are shared among them (`multimap: fractional`) or dropped (`unique`).
+
+## Installation
+
+Requirements: Linux and conda (or mamba). No root access is needed.
 
 ```bash
 git clone https://github.com/die-lab/SmithHunter2.git
 cd SmithHunter2
-mamba env create -f environment.yml
+mamba env create -f environment.yml      # fastp, bowtie 1, snakemake, python
 mamba activate smithhunter2
 ```
 
-Edit `config/config.yaml` (genomes, adapters, thresholds) and `config/samples.tsv`, then:
+The Python code has no third-party dependencies. Instead of the single environment,
+Snakemake can build one environment per rule: add `--software-deployment-method conda`
+to the commands below.
+
+## Quick start
+
+1. Put your FASTQ files and genome FASTA files in a working directory.
+2. Copy `config/config.yaml` and `config/samples.tsv` into it and edit them.
+3. From the working directory:
 
 ```bash
-snakemake -s workflow/Snakefile --cores 8
+snakemake -s /path/to/SmithHunter2/workflow/Snakefile --cores 8
 ```
 
-Alternatively, let Snakemake create one environment per rule:
-`snakemake -s workflow/Snakefile --cores 8 --software-deployment-method conda`.
+`config/samples.tsv` has one row per sample; leave `fq2` empty for single-end data:
 
-### Test run
-
-```bash
-cd .test
-snakemake -s ../workflow/Snakefile --cores 2
-pytest   # from the repository root: unit tests
+```
+sample	fq1	fq2
+rep1	data/rep1_1.fastq.gz	data/rep1_2.fastq.gz
+rep2	data/rep2_1.fastq.gz	data/rep2_2.fastq.gz
 ```
 
-The test data is the SmithHunter example: heavily subset *Ceratitis capitata* reads and
-genomes, not meant to give biologically meaningful results.
+## Configuration
 
-## Main outputs
+The main block declares the genomes:
 
-| File | Content |
+```yaml
+genomes:
+  mito:
+    fasta: data/organism_mt.fasta
+    role: focus
+    topology: circular                 # linear (default) or circular
+    annotation: data/organism_mt.gff3  # optional, e.g. from MITOS2
+  nuclear:
+    fasta: data/organism_nuc.fasta
+    role: exclude
+  symbiont:
+    fasta: data/symbiont.fasta
+    role: focus
+    topology: circular
+    length: [18, 40]                   # read lengths for this genome
+```
+
+Other settings, with their defaults:
+
+| setting | default | meaning |
+|---|---|---|
+| `ambiguous` | `report` | `report`, `discard` or `split` (see above) |
+| `trimming.adapter_r1` / `adapter_r2` | TruSeq small RNA | 3' adapters; empty for fastp autodetection |
+| `trimming.min_length` / `max_length` | 18 / 35 | read length range kept |
+| `mapping.mismatches` | 1 | bowtie `-v` |
+| `mapping.max_hits` | 50 | reads with more equally good alignments go to `too_many_hits` |
+| `loci.merge_gap` | 0 | join alignments closer than this many bases |
+| `loci.multimap` | `fractional` | `fractional` or `unique` within one genome |
+| `loci.min_rpm` / `min_count` | 5 / 5 | per-sample thresholds (reads per million and raw reads) |
+| `loci.min_samples` | n − 1 | samples that must reach both thresholds |
+| `ends.min_five_score` | 0.5 | a locus passes if its 5' score is above this |
+| `ends.min_three_score` | 0.0 | and its 3' score is at least this |
+
+The end score of a locus is 1 when one position holds at least half of the reads
+(`n_thre`), 0.5 for two adjacent positions, and lower for scattered ends.
+
+## Outputs
+
+All paths are under `results/` (the `outdir` setting).
+
+| file | content |
 |---|---|
-| `discovery/loci.tsv` | every locus with coordinates, representative sequence, counts, RPM, end scores, annotation and filter flags |
-| `discovery/candidates.fasta` | representative sequences of loci passing all filters |
+| `discovery/loci.tsv` | every locus, with filter flags (`pass`) |
+| `discovery/candidates.fasta` | representative sequence of each locus that passes |
 | `discovery/locus_reads.tsv.gz` | the reads of every locus, for manual review |
 | `origin/origin_summary.tsv` | reads per origin class and genome, per sample |
-| `origin/length_distribution.tsv` | the same, split by read length |
+| `origin/length_distribution.tsv` | the same, by read length |
+| `origin/read_origin.tsv.gz` | origin class of every unique read |
 | `qc/*.fastp.html` | trimming reports |
+
+Main columns of `loci.tsv`:
+
+| column | meaning |
+|---|---|
+| `start`, `end`, `strand`, `span` | 1-based locus coordinates; `wraps_origin` = 1 if it crosses the origin |
+| `rep_sequence`, `rep_start`, `rep_end` | the most abundant read of the locus and its position |
+| `total_count`, `count_<sample>` | reads (multi-mapping reads count fractionally) |
+| `rpm_<sample>` | reads per million of the trimmed library |
+| `rpm_genome_<sample>` | reads per million of the reads assigned to that genome |
+| `five_score`, `three_score` | end precision (see above); `*_dominant_fraction` = share of the top position |
+| `annotation_class`, `annotation_orientation` | most specific overlapping GFF3 feature and its strand relation |
+| `expression_pass`, `ends_pass`, `pass` | filter results |
+
+## Benchmark on simulated data
+
+`smithhunter simulate` writes a complete experiment with known truth: synthetic
+mitochondrial (focus, circular, with a GFF3), nuclear and bacterial (exclude) genomes,
+FASTQ files, a ready-made configuration, and the list of every simulated small RNA with
+the outcome expected from the pipeline. The read model follows the small RNA-seq
+literature: precise 5' ends and variable 3' ends, non-templated 3' A/U additions,
+negative binomial replicate counts, sequencing errors, rRNA and mRNA degradation
+fragments, tRNA fragments (5' fragments and 3' fragments with the CCA tail), piRNA-like
+reads, contaminants and adapter dimers. The simulated cases include NUMTs, a small RNA
+across the origin, sense/antisense pairs, neighbouring and overlapping small RNAs,
+SNPs, heteroplasmy, weakly expressed and sample-specific small RNAs.
+
+```bash
+pip install -e .                            # once, to get the smithhunter command
+smithhunter simulate --outdir sim
+cd sim
+snakemake -s ../workflow/Snakefile --cores 2
+smithhunter evaluate                        # writes evaluation/summary.txt and tables
+```
+
+`smithhunter simulate --help` lists the options (number of samples and reads, genome
+sizes, degradation level, error rate, paired-end reads, seed). `evaluate` reports for
+each simulated small RNA whether it was recovered as its own locus, merged with
+another, split, missed, or filtered out, and lists passing loci that contain no
+simulated small RNA.
+
+## Known limitations
+
+- **Loci are chains of overlapping reads.** With a background of degradation fragments,
+  small RNAs that lie in an expressed transcript are joined into one long locus. In the
+  default simulation about a third of the mitochondrial small RNAs end up in such loci. The
+  representative sequence is usually still the right one, but the locus is not.
+  Without degradation all simulated small RNAs are recovered. Better locus definition
+  is the next development step.
+- Reads from 3' tRNA fragments carry a non-templated CCA and usually do not align.
+- 5' tRNA fragments look like genuine small RNAs: use `annotation_class` to tell them apart.
+
+## Testing
+
+```bash
+pytest                                              # unit tests, from the repository root
+cd .test && snakemake -s ../workflow/Snakefile --cores 2   # small real dataset
+```
+
+The `.test` data are a heavily subset *Ceratitis capitata* example from SmithHunter;
+they check that the workflow runs, not that the results are meaningful.
+
+## Roadmap
+
+1. Locus definition robust to degradation background (see above).
+2. Module B: target prediction (seed match classes, IntaRNA and RNAhybrid, empirical
+   false discovery rate from shuffled small RNAs; seed rules for Argonaute-guided small
+   RNAs, start-codon windows for bacterial genomes) and precursor folding.
+3. HTML report.
 
 ## Citation
 
-If you use this work, please cite the SmithHunter paper above, and the smithRNA papers:
-Pozzi et al., Mol Biol Evol 34:1960 (2017); Passamonti et al., Sci Rep 10:8219 (2020).
+If you use SmithHunter2, please cite the SmithHunter paper:
+Marturano, Carli et al., *BMC Bioinformatics* 25:286 (2024),
+and the smithRNA papers: Pozzi et al., *Mol Biol Evol* 34:1960 (2017);
+Passamonti et al., *Sci Rep* 10:8219 (2020).
 
 ## License
 
-GPL-3.0, as SmithHunter.
+GPL-3.0-or-later, as SmithHunter.
