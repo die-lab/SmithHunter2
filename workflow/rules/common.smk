@@ -47,13 +47,13 @@ def fastq_inputs(wildcards):
 def fastp_args(wildcards, input, output):
     s = SAMPLES[wildcards.sample]
     args = [f"-i {input.fq1}"]
+    args.append(f"-o {output.reads}")
     if s["fq2"]:
-        # Small RNA inserts are shorter than the reads: merge the pair and keep the merged read.
-        args += [f"-I {input.fq2}", "--merge", f"--merged_out {output.reads}"]
+        # Keep R1 only; R2 serves overlap-based error correction. Merging (--merge) is not used:
+        # fastp needs >= 30 bp of overlap, so most small RNA inserts would be lost.
+        args += [f"-I {input.fq2}", "-O /dev/null", "--correction"]
         if TRIM.get("adapter_r2"):
             args.append(f"--adapter_sequence_r2 {TRIM['adapter_r2']}")
-    else:
-        args.append(f"-o {output.reads}")
     if TRIM.get("adapter_r1"):
         args.append(f"--adapter_sequence {TRIM['adapter_r1']}")
     args += [f"--length_required {max(10, GLOBAL_MIN - 2)}", "--trim_poly_g"]

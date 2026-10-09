@@ -18,6 +18,7 @@ rule discover:
     params:
         merge_gap=LOCI.get("merge_gap", 0),
         min_rpm=LOCI.get("min_rpm", 5),
+        min_count=LOCI.get("min_count", 1),
         min_samples=min_samples_arg(),
         n_thre=ENDS.get("n_thre", 0.5),
         penalty=ENDS.get("penalty", 0.1),
@@ -30,7 +31,8 @@ rule discover:
     shell:
         "{SH} discover --alignments {input.alignments} --counts {input.counts} "
         "--libraries {input.libraries} --genomes {input.genomes} --contigs {input.contigs} "
-        "--merge-gap {params.merge_gap} --min-rpm {params.min_rpm} {params.min_samples} "
+        "--merge-gap {params.merge_gap} --min-rpm {params.min_rpm} --min-count {params.min_count} "
+        "{params.min_samples} "
         "--n-thre {params.n_thre} --penalty {params.penalty} --min-five {params.min_five} "
         "--min-three {params.min_three} --loci {output.loci} --reads {output.reads} "
         "--fasta {output.fasta} > {log} 2>&1"

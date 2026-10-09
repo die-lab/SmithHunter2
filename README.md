@@ -15,15 +15,16 @@ smithRNAs (small mitochondrial highly-transcribed RNAs) and their nuclear target
 
 ## What module A does
 
-1. **Trimming** with fastp. Paired-end reads are merged, since small RNA inserts are shorter
-   than the reads.
+1. **Trimming** with fastp. For paired-end data R1 is kept and R2 is used for overlap-based
+   error correction.
 2. **Collapsing** of identical reads across samples; each unique sequence is aligned once.
 3. **Competitive alignment** with bowtie 1 (`--best --strata`) on one reference holding all
    declared genomes. Circular genomes are extended so reads across the origin align.
 4. **Origin assignment**: `assigned` (one focus genome), `excluded`, `ambiguous`,
    `too_many_hits`, `unmapped`, with per-sample and per-length summaries.
 5. **Loci**: overlapping alignments on the same strand, quantified per sample as counts, RPM
-   on the library and RPM on the genome.
+   on the library and RPM on the genome. A locus passes when enough samples reach both a
+   minimum RPM and a minimum read count.
 6. **End precision**: 5' and 3' end scores, after `sharp_smith.R` from SmithHunter.
 7. **Annotation** with the GFF3 of each genome (e.g. MITOS2 for mitochondria).
 
