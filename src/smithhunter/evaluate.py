@@ -1,13 +1,18 @@
 """Compare module A results with the truth written by ``smithhunter simulate``.
 
 Every simulated smallRNA (and tRNA fragment) of a focus genome is matched to the
-loci on the same contig and strand that overlap it, and gets an observed outcome:
+loci on the same contig and strand. A locus belongs to the smallRNA when its
+representative (most abundant) read starts within ``OWN_DISTANCE`` bases of the
+smallRNA's 5' end. Observed outcomes:
 
-- ``pass``    one locus, holding no other simulated smallRNA, that passes the filters
-- ``fail``    one locus, as above, that does not pass
-- ``merged``  one locus that also holds another simulated smallRNA
-- ``split``   more than one locus
-- ``missed``  no locus
+- ``pass`` / ``fail``  its own locus, holding no other simulated smallRNA, passes / fails
+- ``merged``      its locus also contains another simulated smallRNA, or it has no own
+                  locus but lies inside a locus that belongs to something else
+- ``background``  its reads are only in a background locus (no 5' peak called)
+- ``split``       more than one locus of its own, the second with at least
+                  ``SPLIT_FRACTION`` of the reads of the first
+- ``partial``     overlapping loci exist but none is its own or contains it
+- ``missed``      no overlapping locus
 
 ``as_expected`` compares it with the outcome the simulator planned. For loci found
 the table reports how far they extend beyond the smallRNA (``extra_span``, large when
@@ -25,6 +30,8 @@ from pathlib import Path
 from .seqio import read_tsv, write_tsv
 
 TARGET_CATEGORIES = ("srna", "trf5", "trf3_cca")
+OWN_DISTANCE = 3  # a locus belongs to a smallRNA if its representative starts this close
+SPLIT_FRACTION = 0.1  # a second own locus splits the smallRNA if it has this share of reads
 
 
 def interval(row: dict, length: int, circular: bool) -> tuple[int, int]:
@@ -43,6 +50,20 @@ def overlaps(a: tuple[int, int], b: tuple[int, int], length: int, circular: bool
 def overlap_length(a, b, length, circular) -> int:
     shifts = (0, length, -length) if circular else (0,)
     return max(max(0, min(a[1], b[1] + s) - max(a[0], b[0] + s)) for s in shifts)
+
+
+def covers(outer, inner, length, circular) -> bool:
+    shifts = (0, length, -length) if circular else (0,)
+    return any(outer[0] <= inner[0] + s and outer[1] >= inner[1] + s for s in shifts)
+
+
+def five_offset(feature: dict, locus: dict, length: int) -> int:
+    """Distance of the representative read's 5' end from the smallRNA's 5' end."""
+    if feature["strand"] == "+":
+        d = int(locus["rep_start"]) - int(feature["start"])
+    else:
+        d = int(feature["end"]) - int(locus["rep_end"])
+    return (d + length // 2) % length - length // 2
 
 
 def is_target(row: dict) -> bool:
@@ -77,37 +98,47 @@ def evaluate(truth_dir: str, results_dir: str):
                 if overlaps(f["_iv"], l["_iv"], length, circular)]
         row = {k: f[k] for k in ("feature_id", "category", "start", "end", "strand", "length",
                                  "expected", "total_reads")}
-        if not hits:
-            observed = "missed"
-        elif len(hits) > 1:
+        own = sorted((l for l in hits if abs(five_offset(f, l, length)) <= OWN_DISTANCE),
+                     key=lambda l: -float(l["total_count"]))
+        # weak loci next to the main one (e.g. background starting nearby) do not split it
+        own = [l for l in own if float(l["total_count"]) >= SPLIT_FRACTION * float(own[0]["total_count"])]
+        others = [o for o in srna_like if o is not f and o["strand"] == f["strand"]
+                  and o["contig"] == f["contig"]]
+        if len(own) > 1:
             observed = "split"
-        else:
-            locus = hits[0]
-            others = [o for o in srna_like if o is not f and o["strand"] == f["strand"]
-                      and o["contig"] == f["contig"]
-                      and overlaps(o["_iv"], locus["_iv"], length, circular)]
-            if others and f["category"].startswith("srna"):
+        elif own:
+            locus = own[0]
+            if locus.get("locus_type") == "background":
+                observed = "background"
+            elif any(covers(locus["_iv"], o["_iv"], length, circular) for o in others):
                 observed = "merged"
             else:
                 observed = "pass" if locus["pass"] == "1" else "fail"
-        best = max(hits, key=lambda l: float(l["total_count"]), default=None)
+        elif any(covers(l["_iv"], f["_iv"], length, circular) for l in hits):
+            covering = [l for l in hits if covers(l["_iv"], f["_iv"], length, circular)]
+            observed = "background" if all(l.get("locus_type") == "background"
+                                           for l in covering) else "merged"
+        else:
+            observed = "partial" if hits else "missed"
+        best = own[0] if own else max(hits, key=lambda l: float(l["total_count"]), default=None)
         if best:
-            five_offset = int(best["rep_start"]) - int(f["start"]) if f["strand"] == "+" \
-                else int(f["end"]) - int(best["rep_end"])
             row.update({
                 "locus_id": ",".join(l["locus_id"] for l in hits),
                 "locus_start": best["start"], "locus_end": best["end"],
                 "extra_span": int(best["span"]) - int(f["length"]),
                 "rep_sequence": best["rep_sequence"],
                 "rep_is_canonical": int(best["rep_sequence"] == f["sequence"]) if f["sequence"] else "",
-                "rep_five_offset": five_offset,
+                "rep_five_offset": five_offset(f, best, length),
+                "locus_type": best.get("locus_type", ""),
                 "locus_count": best["total_count"],
                 "five_score": best["five_score"], "three_score": best["three_score"],
                 "annotation_class": best["annotation_class"],
             })
         row["observed"] = observed
-        row["as_expected"] = int(observed == f["expected"]
-                                 or (f["expected"] == "fail" and observed == "missed"))
+        if f["expected"] == "fail":  # none of its own loci passes
+            row["as_expected"] = int(not any(l["pass"] == "1" for l in own))
+        else:
+            row["as_expected"] = int(observed == f["expected"] or f["expected"] == "any")
         rows.append(row)
 
     false_pos = []
@@ -134,7 +165,7 @@ def evaluate(truth_dir: str, results_dir: str):
 
 ROW_COLUMNS = ["feature_id", "category", "start", "end", "strand", "length", "expected",
                "observed", "as_expected", "total_reads", "locus_id", "locus_start", "locus_end",
-               "extra_span", "rep_sequence", "rep_is_canonical", "rep_five_offset",
+               "locus_type", "extra_span", "rep_sequence", "rep_is_canonical", "rep_five_offset",
                "locus_count", "five_score", "three_score", "annotation_class"]
 FP_COLUMNS = ["locus_id", "start", "end", "strand", "span", "total_count", "rep_sequence",
               "five_score", "annotation_class", "explained_by"]

@@ -13,8 +13,10 @@ loci on those genomes while the others compete for the reads.
 - Reads that fit two genomes equally well are reported as **ambiguous** and handled by
   a policy you choose.
 - Circular genomes are handled natively: loci across the origin are found as one locus.
-- Loci are defined on genomic coordinates and strand, quantified per sample, scored for
-  the precision of their 5' and 3' ends, and annotated with your GFF3.
+- Loci are called from the 5' ends of reads, where small RNAs pile up and degradation
+  fragments do not, so small RNAs inside a degraded rRNA or mRNA keep their own locus.
+  They are quantified per sample, scored for the precision of their 5' and 3' ends, and
+  annotated with your GFF3.
 - A built-in **simulator** writes a realistic library with known truth, so you can see
   what the pipeline recovers before trusting it on real data.
 
@@ -40,8 +42,10 @@ bowtie 1 on ONE reference holding all genomes (-v 1, --best --strata, up to 50 h
 origin of each read: assigned │ excluded │ ambiguous │ too_many_hits │ unmapped
   │
   ▼  focus genomes only
-loci = overlapping alignments on the same strand
-  │ counts and RPM per sample, expression filter
+blocks of overlapping alignments on the same strand
+  │ split at 5' end peaks: small RNAs vs degradation background
+  ▼
+loci: counts and RPM per sample, expression filter above local background
   │ 5' / 3' end scores (after SmithHunter's sharp_smith)
   │ annotation with GFF3
   ▼
@@ -61,6 +65,18 @@ focus genome and in another genome. The `ambiguous` setting decides what happens
 ambiguous reads: `report` (listed, not used for loci), `discard`, or `split` (shared
 among all best alignments). Within one genome, reads with several equally good
 alignments are shared among them (`multimap: fractional`) or dropped (`unique`).
+
+### How loci are called
+
+Reads that overlap on one strand form a block. Inside a block, 5' end positions are
+taken from the most to the least abundant: a position, with the reads starting up to
+`peak_window` bases away, becomes a **peak locus** when its read count is significantly
+above the local background (Poisson test). The background is the mean number of reads
+starting at each position within `background_flank` bases, leaving out stronger peaks.
+Reads claimed by no peak (typically degradation fragments) form **background loci**,
+which are reported but never pass. A sample supports a peak locus when the locus is
+significantly above that sample's own background and, after subtracting it, reaches
+`min_count` and `min_rpm`. With `peaks: false`, every block is one locus.
 
 ## Installation
 
@@ -125,7 +141,11 @@ Other settings, with their defaults:
 | `trimming.min_length` / `max_length` | 18 / 35 | read length range kept |
 | `mapping.mismatches` | 1 | bowtie `-v` |
 | `mapping.max_hits` | 50 | reads with more equally good alignments go to `too_many_hits` |
-| `loci.merge_gap` | 0 | join alignments closer than this many bases |
+| `loci.merge_gap` | 0 | join alignments closer than this many bases into one block |
+| `loci.peaks` | `true` | split blocks at 5' end peaks |
+| `loci.peak_window` | 2 | reads starting this close to a peak belong to it |
+| `loci.peak_pvalue` | 0.001 | Poisson test of a peak against the local background |
+| `loci.background_flank` | 50 | bases on each side used to estimate the background |
 | `loci.multimap` | `fractional` | `fractional` or `unique` within one genome |
 | `loci.min_rpm` / `min_count` | 5 / 5 | per-sample thresholds (reads per million and raw reads) |
 | `loci.min_samples` | n − 1 | samples that must reach both thresholds |
@@ -154,8 +174,10 @@ Main columns of `loci.tsv`:
 | column | meaning |
 |---|---|
 | `start`, `end`, `strand`, `span` | 1-based locus coordinates; `wraps_origin` = 1 if it crosses the origin |
+| `locus_type` | `peak` (candidate small RNA) or `background` (reads with no 5' peak; never passes) |
 | `rep_sequence`, `rep_start`, `rep_end` | the most abundant read of the locus and its position |
 | `total_count`, `count_<sample>` | reads (multi-mapping reads count fractionally) |
+| `background_count` | reads expected from the local background in the peak window |
 | `rpm_<sample>` | reads per million of the trimmed library |
 | `rpm_genome_<sample>` | reads per million of the reads assigned to that genome |
 | `five_score`, `three_score` | end precision (see above); `*_dominant_fraction` = share of the top position |
@@ -191,12 +213,13 @@ simulated small RNA.
 
 ## Known limitations
 
-- **Loci are chains of overlapping reads.** With a background of degradation fragments,
-  small RNAs that lie in an expressed transcript are joined into one long locus. In the
-  default simulation about a third of the mitochondrial small RNAs end up in such loci. The
-  representative sequence is usually still the right one, but the locus is not.
-  Without degradation all simulated small RNAs are recovered. Better locus definition
-  is the next development step.
+- On simulated data, every small RNA has the expected outcome with up to 30% of the
+  reads from degradation. Real degradation is less uniform than simulated degradation:
+  on real data weak secondary peaks can appear a few bases from a strong small RNA
+  and pass the filters when the libraries are small. Check loci that lie close
+  together, and their `background_count`.
+- A peak locus also contains degradation fragments that start at the same position,
+  so its `end` can extend beyond the small RNA; `rep_sequence` is the reliable sequence.
 - Reads from 3' tRNA fragments carry a non-templated CCA and usually do not align.
 - 5' tRNA fragments look like genuine small RNAs: use `annotation_class` to tell them apart.
 
@@ -212,11 +235,10 @@ they check that the workflow runs, not that the results are meaningful.
 
 ## Roadmap
 
-1. Locus definition robust to degradation background (see above).
-2. Module B: target prediction (seed match classes, IntaRNA and RNAhybrid, empirical
+1. Module B: target prediction (seed match classes, IntaRNA and RNAhybrid, empirical
    false discovery rate from shuffled small RNAs; seed rules for Argonaute-guided small
    RNAs, start-codon windows for bacterial genomes) and precursor folding.
-3. HTML report.
+2. HTML report.
 
 ## Citation
 

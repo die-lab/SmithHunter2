@@ -1,13 +1,29 @@
 """Define small RNA loci on focus genomes, quantify them and score their ends.
 
-A locus is a run of overlapping alignments on one strand of one contig (reads
-closer than ``merge_gap`` bases are joined). On circular contigs a locus may cross
-the origin. This replaces the sequence-identity clustering of SmithHunter v0,
-which could join reads from different positions and ignored terminal gaps.
+Loci are built in two steps.
+
+1. Blocks: runs of overlapping alignments on one strand of one contig (reads closer
+   than ``merge_gap`` bases are joined). On circular contigs a block may cross the origin.
+2. Peaks: inside a block, small RNAs show up as positions where many reads start (their
+   5' end is precise), while degradation fragments start anywhere. The 5' positions are
+   taken from the most to the least abundant; each one, with the reads starting within
+   ``peak_window`` bases of it, becomes a ``peak`` locus when that read count is
+   significantly above the local background (Poisson test, ``peak_pvalue``). The
+   background is the mean number of reads starting at each position within
+   ``background_flank`` bases, leaving out the positions of stronger peaks already called. Reads claimed by no peak are chained again into
+   ``background`` loci, which are reported but never pass the filters.
+
+A sample supports a peak locus when its reads are significantly above that sample's own
+local background and, after subtracting the background, reach ``min_count`` and ``min_rpm``.
+
+Without step 2, degradation fragments chain every small RNA of an expressed transcript
+into one locus as long as the transcript. This replaces the sequence-identity
+clustering of SmithHunter v0, which could join reads from different positions.
 """
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -22,6 +38,8 @@ class Member:
     start: int
     end: int
     weight: float
+    count: float = 0.0  # weight x reads in all samples
+    counts: tuple = ()  # weight x reads per sample
 
 
 @dataclass
@@ -33,6 +51,8 @@ class Locus:
     end: int
     members: list[Member] = field(default_factory=list)
     wraps: bool = False
+    kind: str = "peak"
+    background: list[float] = field(default_factory=list)  # expected reads per sample
 
 
 def merge_members(members: list[Member], gap: int) -> list[tuple[int, int, list[Member]]]:
@@ -51,13 +71,90 @@ def build_loci(genome, contig, strand, members, gap, length, circular) -> list[L
     loci = [Locus(genome, contig, strand, s, e, ms) for s, e, ms in blocks]
     if circular and len(loci) > 1 and loci[-1].end + gap - length >= loci[0].start:
         first, last = loci.pop(0), loci[-1]
-        shifted = [Member(m.read_id, m.start + length, m.end + length, m.weight)
+        shifted = [Member(m.read_id, m.start + length, m.end + length, m.weight, m.count, m.counts)
                    for m in first.members]
         last.members.extend(shifted)
         last.end = max(last.end, first.end + length)
     for locus in loci:
         locus.wraps = circular and locus.end > length
     return loci
+
+
+def five_prime(m: Member, strand: str) -> int:
+    return m.start if strand == "+" else m.end - 1
+
+
+def poisson_significant(k: float, background: float, pvalue: float) -> bool:
+    """True when P(X >= k) < pvalue for X ~ Poisson(background)."""
+    k = math.floor(k + 1e-9)
+    if k <= 0:
+        return False
+    if background <= 0:
+        return True
+    if k > background + 10 * math.sqrt(background) + 10:
+        return True
+    term = cdf = math.exp(-background)
+    for i in range(1, k):
+        term *= background / i
+        cdf += term
+    return 1.0 - cdf < pvalue
+
+
+def split_peaks(block: Locus, window: int = 2, pvalue: float = 0.001,
+                flank: int = 50, gap: int = 0) -> list[Locus]:
+    """Split one block of overlapping reads into peak loci and background loci."""
+    profile: dict[int, float] = defaultdict(float)
+    per_sample: dict[int, list[float]] = {}
+    n = max((len(m.counts) for m in block.members), default=0)
+    for m in block.members:
+        pos = five_prime(m, block.strand)
+        profile[pos] += m.count
+        acc = per_sample.setdefault(pos, [0.0] * n)
+        for i, c in enumerate(m.counts):
+            acc[i] += c
+    claimed: dict[int, int] = {}
+    peaks: list[int] = []
+    backgrounds: list[list[float]] = []
+    for pos in sorted(profile, key=lambda p: (-profile[p], p)):
+        if pos in claimed:
+            continue
+        near = [q for q in range(pos - window, pos + window + 1)
+                if q in profile and q not in claimed]
+        reads = sum(profile[q] for q in near)
+        around = [profile.get(q, 0.0) for q in range(pos - flank, pos + flank + 1)
+                  if abs(q - pos) > window and q not in claimed]
+        background = sum(around) / len(around) * (2 * window + 1) if around else 0.0
+        if poisson_significant(reads, background, pvalue):
+            flank_pos = [q for q in range(pos - flank, pos + flank + 1)
+                         if abs(q - pos) > window and q not in claimed]
+            backgrounds.append([sum(per_sample[q][i] for q in flank_pos if q in per_sample)
+                                / len(flank_pos) * (2 * window + 1) for i in range(n)])
+            for q in near:
+                claimed[q] = len(peaks)
+            peaks.append(pos)
+
+    groups: list[list[Member]] = [[] for _ in peaks]
+    rest: list[Member] = []
+    for m in block.members:
+        idx = claimed.get(five_prime(m, block.strand))
+        (rest if idx is None else groups[idx]).append(m)
+    loci = [Locus(block.genome, block.contig, block.strand, min(m.start for m in ms),
+                  max(m.end for m in ms), ms, background=bg) for ms, bg in zip(groups, backgrounds)]
+    loci += [Locus(block.genome, block.contig, block.strand, s, e, ms, kind="background")
+             for s, e, ms in merge_members(rest, gap)]
+    return loci
+
+
+def fold_origin(locus: Locus, length: int, circular: bool) -> Locus:
+    """Bring a locus that lies past the end of a circular contig back to the origin."""
+    if circular and locus.start >= length:
+        locus.members = [Member(m.read_id, m.start - length, m.end - length, m.weight, m.count,
+                                m.counts)
+                         for m in locus.members]
+        locus.start -= length
+        locus.end -= length
+    locus.wraps = circular and locus.end > length
+    return locus
 
 
 def load_counts(path: str):
@@ -73,7 +170,8 @@ def load_counts(path: str):
 
 def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs_path,
              merge_gap=0, min_rpm=5.0, min_count=1, min_samples=None, n_thre=0.5, penalty=0.1,
-             min_five=0.5, min_three=0.0):
+             min_five=0.5, min_three=0.0, peaks=True, peak_window=2, peak_pvalue=0.001,
+             background_flank=50):
     samples, counts = load_counts(counts_path)
     library = {r["sample"]: float(r["reads_kept"]) for r in read_tsv(libraries_path)}
     genomes = {g["name"]: g for g in read_tsv(genomes_path)}
@@ -92,7 +190,8 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
             if not int(g["min_length"]) <= len(seq) <= int(g["max_length"]):
                 continue
             w = float(weight)
-            grouped[(genome, contig, strand)].append(Member(rid, int(start), int(end), w))
+            grouped[(genome, contig, strand)].append(
+                Member(rid, int(start), int(end), w, w * sum(row), tuple(w * c for c in row)))
             totals = genome_totals[genome]
             for i, c in enumerate(row):
                 totals[i] += w * c
@@ -103,8 +202,13 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
     loci: list[Locus] = []
     for (genome, contig, strand), members in sorted(grouped.items()):
         info = contigs[(genome, contig)]
-        loci.extend(build_loci(genome, contig, strand, members, merge_gap,
-                               int(info["length"]), info["circular"] == "1"))
+        length, circular = int(info["length"]), info["circular"] == "1"
+        for block in build_loci(genome, contig, strand, members, merge_gap, length, circular):
+            if not peaks:
+                loci.append(block)
+                continue
+            for locus in split_peaks(block, peak_window, peak_pvalue, background_flank, merge_gap):
+                loci.append(fold_origin(locus, length, circular))
     loci.sort(key=lambda l: (l.genome, l.contig, l.start, l.strand))
 
     rows, reads = [], []
@@ -136,7 +240,15 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
         rpm_genome = [c / t * 1e6 if t else 0.0 for c, t in zip(per_sample, totals)]
         five_score, five_dom = end_score(five, n_thre, penalty)
         three_score, three_dom = end_score(three, n_thre, penalty)
-        n_pass = sum(r >= min_rpm and c >= min_count for r, c in zip(rpm, per_sample))
+        # A sample counts when the locus is expressed above the local background in it.
+        background = locus.background or [0.0] * len(samples)
+        n_pass = 0
+        for c, b, s in zip(per_sample, background, samples):
+            net = c - b
+            net_rpm = net / library[s] * 1e6 if library.get(s) else 0.0
+            if net >= min_count and net_rpm >= min_rpm and (
+                    b <= 0 or poisson_significant(c, b, peak_pvalue)):
+                n_pass += 1
 
         ann = annotations.get(locus.genome)
         if ann:
@@ -150,19 +262,22 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
 
         expr_pass = n_pass >= min_samples
         ends_pass = five_score > min_five and three_score >= min_three
+        candidate = locus.kind == "peak"
         row = {
             "locus_id": locus_id, "genome": locus.genome, "contig": locus.contig,
             "start": locus.start + 1, "end": locus.end - length if locus.wraps else locus.end,
             "strand": locus.strand, "span": locus.end - locus.start, "wraps_origin": int(locus.wraps),
+            "locus_type": locus.kind,
             "rep_id": rep_id, "rep_sequence": counts[rep_id][0], "rep_length": len(counts[rep_id][0]),
             "rep_start": rep.start % length + 1, "rep_end": (rep.end - 1) % length + 1,
             "unique_reads": len(per_read), "total_count": round(sum(per_sample), 3),
+            "background_count": round(sum(background), 3),
             "samples_passing_rpm": n_pass,
             "five_score": round(five_score, 4), "five_dominant_fraction": round(five_dom, 4),
             "three_score": round(three_score, 4), "three_dominant_fraction": round(three_dom, 4),
             **annotation,
             "expression_pass": int(expr_pass), "ends_pass": int(ends_pass),
-            "pass": int(expr_pass and ends_pass),
+            "pass": int(candidate and expr_pass and ends_pass),
         }
         for s, c, r, rg in zip(samples, per_sample, rpm, rpm_genome):
             row[f"count_{s}"] = round(c, 3)
@@ -174,8 +289,8 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
 
 LOCUS_COLUMNS = [
     "locus_id", "genome", "contig", "start", "end", "strand", "span", "wraps_origin",
-    "rep_id", "rep_sequence", "rep_length", "rep_start", "rep_end", "unique_reads",
-    "total_count", "samples_passing_rpm", "five_score", "five_dominant_fraction",
+    "locus_type", "rep_id", "rep_sequence", "rep_length", "rep_start", "rep_end", "unique_reads",
+    "total_count", "background_count", "samples_passing_rpm", "five_score", "five_dominant_fraction",
     "three_score", "three_dominant_fraction", "annotation_class", "annotation_types",
     "annotation_names", "annotation_orientation", "expression_pass", "ends_pass", "pass",
 ]

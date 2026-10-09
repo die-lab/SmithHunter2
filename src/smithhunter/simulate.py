@@ -31,7 +31,7 @@ Library content, with defaults taken from the small RNA-seq literature
 Scenarios placed on the mitochondrion, each with the outcome module A should give
 (``expected`` column of ``truth/features.tsv``): ordinary smallRNAs, one inside the
 most expressed rRNA, one across the origin, a sense/antisense pair, two smallRNAs
-10 nt apart, two overlapping by 6 nt (expected to merge into one locus), one copied
+10 nt apart, two overlapping by 6 nt, one copied
 identically into a NUMT (ambiguous reads: missed with ``ambiguous: report``), one in a
 NUMT with one difference (assigned to mito by ``--best --strata``), one with a fixed
 SNP against the reference, one with heteroplasmy in one sample, one too weak to pass
@@ -246,9 +246,9 @@ class Simulator:
 
         s = self.free_position(mito, 38, taken)
         self.srna(mito, "srna_overlap_a", "srna_overlap_pair", s, 22, "+",
-                  self.per_sample(2000), "merged")
+                  self.per_sample(2000), "pass")
         self.srna(mito, "srna_overlap_b", "srna_overlap_pair", s + 16, 22, "+",
-                  self.per_sample(1000), "merged")
+                  self.per_sample(1000), "pass")
 
         # NUMTs: the nuclear copies (smallRNA +- 150 nt) are written by build_nuclear; the
         # whole copied segment is kept free of other smallRNAs.
@@ -290,9 +290,14 @@ class Simulator:
         for (ftype, name, s, e, strand), w in zip(trnas, weights):
             mean = total * w / sum(weights)
             for kind, share in (("trf5", 0.6), ("trf3_cca", 0.4)):
+                # weakly expressed fragments may or may not pass the filters
+                expected = "pass" if mean * share >= 20 else "any"
+                if kind == "trf3_cca":
+                    after = mito.region(e, e + 3) if strand == "+" else mito.region(s - 3, s, "-")
+                    # reads still align when the genome after the tRNA almost spells CCA
+                    expected = "fail" if sum(a != b for a, b in zip(after, "CCA")) > 1 else "any"
                 src = Source(f"{kind}_{name}", kind, "mito_trf", mito.name, mito.contig, s, e,
-                             strand, "pass" if kind == "trf5" else "fail",
-                             [mean * share] * p.samples)
+                             strand, expected, [mean * share] * p.samples)
                 src.template = mito.region(s, e, strand)
                 src.sequence = src.template
                 # truth interval: the genomic part of the fragments
@@ -567,6 +572,10 @@ mapping:
 
 loci:
   merge_gap: 0
+  peaks: true
+  peak_window: 2
+  peak_pvalue: 0.001
+  background_flank: 50
   multimap: fractional
   min_rpm: 5
   min_count: 5

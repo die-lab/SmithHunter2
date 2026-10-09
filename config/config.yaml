@@ -45,7 +45,11 @@ mapping:
   max_hits: 50       # reads with more equally best alignments are set aside
 
 loci:
-  merge_gap: 0           # join alignments closer than this many bases
+  merge_gap: 0           # join alignments closer than this many bases into one block
+  peaks: true            # split blocks at 5' end peaks (false: one locus per block)
+  peak_window: 2         # reads starting within this many bases of a peak belong to it
+  peak_pvalue: 0.001     # Poisson test of a peak against the local background
+  background_flank: 50   # bases on each side used to estimate the background
   multimap: fractional   # fractional | unique (within one genome)
   min_rpm: 5             # reads per million (library total) in one sample
   min_count: 5           # and at least this many reads in that sample

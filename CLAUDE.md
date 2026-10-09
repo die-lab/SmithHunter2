@@ -61,16 +61,17 @@ variable `three_score` in the filter.
   The `.test` reads are random reads from a real sample: they only show that the workflow runs.
 - `simulate` / `evaluate` subcommands: simulated library with known truth (isomiRs, non-templated
   tails, errors, degradation, tRFs, NUMTs, origin-spanning locus, close/overlapping pairs, SNP,
-  heteroplasmy). Without degradation 44/44 outcomes match (CI checks this). With the default
-  degradation (8% of reads) about a third of mitochondrial smallRNAs are chained with degradation
-  fragments into gene-sized loci: locus definition by overlap is not robust.
+  heteroplasmy). Locus definition by overlap alone chained a third of the smallRNAs with
+  degradation into gene-sized loci, so loci are now split at 5' end peaks (Poisson test against the
+  local background, `split_peaks` in `loci.py`); the expression filter subtracts each sample's
+  background. Simulations: 44/44 outcomes as expected from 0% to 30% degradation, several seeds.
+- Open: on `.test` (real reads) weak satellite peaks 3-15 nt from strong loci pass the filters
+  (12 -> 48 passing loci). To discuss: merge peaks close to a much stronger one.
 
 ## Next steps
 
-1. Locus definition robust to degradation background (to agree with the maintainer), measured
-   with `simulate`/`evaluate`.
-2. Legacy comparison with v0 output on the same data.
-3. Module B (targets), then HTML report, then optional tools (MINTmap, Kraken2 on unmapped
+1. Satellite peaks on real data (see Status), then legacy comparison with v0 output on the same data.
+2. Module B (targets), then HTML report, then optional tools (MINTmap, Kraken2 on unmapped
    reads, ShortStack cross-check, AGO-CLIP chimeras).
 
 ## Commands
