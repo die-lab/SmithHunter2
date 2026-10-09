@@ -21,14 +21,17 @@ assigned to their best genome; ties between genomes are `ambiguous` and handled 
 
 - Snakemake; conda env per rule plus a single `environment.yml`; Python core with no
   third-party dependencies (parses bowtie SAM directly, testable without pysam).
-- fastp for SE and PE (PE: merge pairs). Collapse identical reads, align unique sequences once.
+- fastp for SE and PE. PE: keep R1, R2 only for overlap correction (`--merge` needs >= 30 bp
+  overlap and lost 84% of the ~31 nt inserts in the test data). Collapse identical reads,
+  align unique sequences once.
 - bowtie 1, `-v 1 -k 50 -m 50 --best --strata --reorder`, on one combined reference
   (contigs named `genome|contig`). Replaces v0's bowtie2 cascade mito → nuclear → mito, which
   dropped any read touching the nuclear genome even when it fit the mitochondrion better.
 - Loci by genomic coordinates and strand (replaces v0 vsearch clustering by sequence identity).
 - Circular contigs: overhang appended to the reference, folded back after alignment, loci may
   wrap the origin.
-- Expression filter: RPM on library, `min_samples` defaults to n - 1 (as in the 2025 GBE paper).
+- Expression filter: RPM on library and raw count per sample (`min_rpm`, `min_count`);
+  `min_samples` defaults to n - 1 (as in the 2025 GBE paper).
 - End score: cleaned version of v0 `sharp_smith.R` (see `src/smithhunter/ends.py`).
 - Module B (to do): PITA is dropped. Seed 2–8 by default (canonical seed; Bartel lab,
   McGeary et al. 2019; Plazzi et al. 2024 for smithRNAs). Site classes 8mer / 7mer-m8 /

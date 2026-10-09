@@ -77,7 +77,8 @@ def cmd_assign(args):
 def cmd_discover(args):
     samples, rows, reads = discover(
         args.alignments, args.counts, args.libraries, args.genomes, args.contigs,
-        merge_gap=args.merge_gap, min_rpm=args.min_rpm, min_samples=args.min_samples,
+        merge_gap=args.merge_gap, min_rpm=args.min_rpm, min_count=args.min_count,
+        min_samples=args.min_samples,
         n_thre=args.n_thre, penalty=args.penalty, min_five=args.min_five, min_three=args.min_three)
     write_tsv(args.loci, rows, locus_columns(samples))
     write_tsv(args.reads, reads, READ_COLUMNS)
@@ -130,6 +131,7 @@ def main(argv=None):
     s.add_argument("--contigs", required=True)
     s.add_argument("--merge-gap", type=int, default=0)
     s.add_argument("--min-rpm", type=float, default=5.0)
+    s.add_argument("--min-count", type=float, default=1)
     s.add_argument("--min-samples", type=int, default=None)
     s.add_argument("--n-thre", type=float, default=0.5)
     s.add_argument("--penalty", type=float, default=0.1)

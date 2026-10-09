@@ -30,6 +30,7 @@ loci:
   merge_gap: 0
   multimap: fractional
   min_rpm: 5
+  min_count: 3
   min_samples: null
 
 ends:

@@ -72,7 +72,7 @@ def load_counts(path: str):
 
 
 def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs_path,
-             merge_gap=0, min_rpm=5.0, min_samples=None, n_thre=0.5, penalty=0.1,
+             merge_gap=0, min_rpm=5.0, min_count=1, min_samples=None, n_thre=0.5, penalty=0.1,
              min_five=0.5, min_three=0.0):
     samples, counts = load_counts(counts_path)
     library = {r["sample"]: float(r["reads_kept"]) for r in read_tsv(libraries_path)}
@@ -136,7 +136,7 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
         rpm_genome = [c / t * 1e6 if t else 0.0 for c, t in zip(per_sample, totals)]
         five_score, five_dom = end_score(five, n_thre, penalty)
         three_score, three_dom = end_score(three, n_thre, penalty)
-        n_pass = sum(r >= min_rpm for r in rpm)
+        n_pass = sum(r >= min_rpm and c >= min_count for r, c in zip(rpm, per_sample))
 
         ann = annotations.get(locus.genome)
         if ann:

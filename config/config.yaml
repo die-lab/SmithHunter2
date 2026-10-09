@@ -48,6 +48,7 @@ loci:
   merge_gap: 0           # join alignments closer than this many bases
   multimap: fractional   # fractional | unique (within one genome)
   min_rpm: 5             # reads per million (library total) in one sample
+  min_count: 5           # and at least this many reads in that sample
   min_samples: null      # samples that must reach min_rpm; null -> number of samples - 1
 
 ends:
