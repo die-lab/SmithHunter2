@@ -4,7 +4,7 @@ Context for anyone (human or Claude) continuing this project. Read this first.
 
 ## Working with the maintainer
 
-- The maintainer writes in Italian; answer in Italian. Code, comments and docs are in English.
+- Use English in conversation (the maintainer's preference), as in code, comments and docs.
 - The maintainer co-authored the original SmithHunter (ESZlab).
 - `die-lab/SmithHunter` is an earlier experimental rewrite: it is NOT the original and
   must not be used as a model. The original is https://github.com/ESZlab/SmithHunter.
