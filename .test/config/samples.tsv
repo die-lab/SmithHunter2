@@ -1,0 +1,4 @@
+sample	fq1	fq2
+micro1	data/micro1_1.fastq.gz	data/micro1_2.fastq.gz
+micro2	data/micro2_1.fastq.gz	data/micro2_2.fastq.gz
+micro3	data/micro3_1.fastq.gz	data/micro3_2.fastq.gz

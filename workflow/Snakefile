@@ -1,0 +1,18 @@
+"""SmithHunter2 - module A: small RNA discovery across user-selected genomes."""
+
+configfile: "config/config.yaml"
+
+
+include: "rules/common.smk"
+include: "rules/preprocess.smk"
+include: "rules/mapping.smk"
+include: "rules/discovery.smk"
+
+
+rule all:
+    input:
+        OUT / "discovery/loci.tsv",
+        OUT / "discovery/candidates.fasta",
+        OUT / "origin/origin_summary.tsv",
+        OUT / "origin/length_distribution.tsv",
+        expand(OUT / "qc/{sample}.fastp.json", sample=SAMPLES),

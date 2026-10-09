@@ -1,0 +1,7 @@
+results/
+.test/results/
+.snakemake/
+.test/.snakemake/
+__pycache__/
+*.egg-info/
+.pytest_cache/
