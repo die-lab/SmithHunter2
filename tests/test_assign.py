@@ -28,7 +28,7 @@ def test_parse_sam_skips_unmapped_and_reads_strand():
 
 def test_group_hits_requires_contiguous_reads():
     lines = [sam("u1", 0, "mt|chrM", 1), sam("u2", 0, "mt|chrM", 5), sam("u1", 0, "mt|chrM", 9)]
-    with pytest.raises(ValueError, match="--reorder"):
+    with pytest.raises(ValueError, match="not contiguous"):
         list(group_hits(lines))
 
 
