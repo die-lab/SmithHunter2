@@ -79,7 +79,9 @@ def cmd_discover(args):
         args.alignments, args.counts, args.libraries, args.genomes, args.contigs,
         merge_gap=args.merge_gap, min_rpm=args.min_rpm, min_count=args.min_count,
         min_samples=args.min_samples,
-        n_thre=args.n_thre, penalty=args.penalty, min_five=args.min_five, min_three=args.min_three)
+        n_thre=args.n_thre, penalty=args.penalty, min_five=args.min_five, min_three=args.min_three,
+        peaks=not args.no_peaks, peak_window=args.peak_window, peak_pvalue=args.peak_pvalue,
+        background_flank=args.background_flank)
     write_tsv(args.loci, rows, locus_columns(samples))
     write_tsv(args.reads, reads, READ_COLUMNS)
     write_fasta(args.fasta, rows)
@@ -147,6 +149,11 @@ def main(argv=None):
     s.add_argument("--min-rpm", type=float, default=5.0)
     s.add_argument("--min-count", type=float, default=1)
     s.add_argument("--min-samples", type=int, default=None)
+    s.add_argument("--no-peaks", action="store_true",
+                   help="loci are whole blocks of overlapping reads (no 5' peak splitting)")
+    s.add_argument("--peak-window", type=int, default=2)
+    s.add_argument("--peak-pvalue", type=float, default=0.001)
+    s.add_argument("--background-flank", type=int, default=50)
     s.add_argument("--n-thre", type=float, default=0.5)
     s.add_argument("--penalty", type=float, default=0.1)
     s.add_argument("--min-five", type=float, default=0.5)

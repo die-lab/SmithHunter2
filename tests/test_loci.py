@@ -2,7 +2,8 @@ import pytest
 
 from smithhunter.annotate import Annotation, Feature, describe
 from smithhunter.ends import end_score
-from smithhunter.loci import Member, build_loci, discover
+from smithhunter.loci import (Locus, Member, build_loci, discover, fold_origin,
+                              poisson_significant, split_peaks)
 
 
 def test_end_score():
@@ -82,3 +83,47 @@ def test_discover_end_to_end(tmp_path):
     assert second["annotation_class"] == "intergenic"
     assert second["expression_pass"] == 0  # only one read
     assert len(reads) == 3
+
+
+def test_poisson_significant():
+    assert poisson_significant(3, 0, 0.001)
+    assert not poisson_significant(0.5, 0, 0.001)
+    assert not poisson_significant(12, 10, 0.001)
+    assert poisson_significant(40, 10, 0.001)
+
+
+def degraded_block(strand="+"):
+    """Two small RNAs 16 nt apart inside a transcript with one fragment per position."""
+    members = [Member(f"d{i}", i, i + 30, 1, 1.0) for i in range(0, 300, 3)]
+    for i in range(40):
+        members.append(Member(f"a{i}", 100 + (i % 3 == 0), 122, 1, 5.0))
+        members.append(Member(f"b{i}", 116, 138 + i % 2, 1, 3.0))
+    return Locus("mt", "chrM", strand, 0, 330, members)
+
+
+def test_split_peaks_separates_small_rnas_from_degradation():
+    loci = split_peaks(degraded_block(), window=2, pvalue=0.001, flank=50)
+    peaks = [l for l in loci if l.kind == "peak"]
+    assert len(peaks) == 2
+    for name in "ab":
+        locus = next(l for l in peaks if any(m.read_id == f"{name}0" for m in l.members))
+        ids = [m.read_id for m in locus.members]
+        assert sum(i[0] == name for i in ids) == 40 and all(i[0] in name + "d" for i in ids)
+        assert sum(i[0] == "d" for i in ids) <= 2  # fragments starting at the same place
+    background = [l for l in loci if l.kind == "background"]
+    assert all(m.read_id.startswith("d") for l in background for m in l.members)
+
+
+def test_split_peaks_minus_strand_uses_end_as_five_prime():
+    block = Locus("mt", "chrM", "-", 0, 60, [Member(f"r{i}", 10 + i % 4, 40, 1, 5.0)
+                                             for i in range(20)])
+    loci = split_peaks(block)
+    assert len(loci) == 1 and loci[0].kind == "peak" and len(loci[0].members) == 20
+
+
+def test_fold_origin():
+    locus = Locus("mt", "chrM", "+", 105, 120, [Member("x", 105, 120, 1, 1)])
+    fold_origin(locus, 100, True)
+    assert (locus.start, locus.end, locus.wraps) == (5, 20, False)
+    locus = Locus("mt", "chrM", "+", 95, 110, [Member("x", 95, 110, 1, 1)])
+    assert fold_origin(locus, 100, True).wraps

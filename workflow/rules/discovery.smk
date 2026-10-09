@@ -20,6 +20,10 @@ rule discover:
         min_rpm=LOCI.get("min_rpm", 5),
         min_count=LOCI.get("min_count", 1),
         min_samples=min_samples_arg(),
+        peaks="" if LOCI.get("peaks", True) else "--no-peaks",
+        peak_window=LOCI.get("peak_window", 2),
+        peak_pvalue=LOCI.get("peak_pvalue", 0.001),
+        background_flank=LOCI.get("background_flank", 50),
         n_thre=ENDS.get("n_thre", 0.5),
         penalty=ENDS.get("penalty", 0.1),
         min_five=ENDS.get("min_five_score", 0.5),
@@ -32,7 +36,8 @@ rule discover:
         "{SH} discover --alignments {input.alignments} --counts {input.counts} "
         "--libraries {input.libraries} --genomes {input.genomes} --contigs {input.contigs} "
         "--merge-gap {params.merge_gap} --min-rpm {params.min_rpm} --min-count {params.min_count} "
-        "{params.min_samples} "
+        "{params.min_samples} {params.peaks} --peak-window {params.peak_window} "
+        "--peak-pvalue {params.peak_pvalue} --background-flank {params.background_flank} "
         "--n-thre {params.n_thre} --penalty {params.penalty} --min-five {params.min_five} "
         "--min-three {params.min_three} --loci {output.loci} --reads {output.reads} "
         "--fasta {output.fasta} > {log} 2>&1"
