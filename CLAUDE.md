@@ -8,7 +8,10 @@ Context for anyone (human or Claude) continuing this project. Read this first.
 - The maintainer co-authored the original SmithHunter (ESZlab).
 - `die-lab/SmithHunter` is an earlier experimental rewrite: it is NOT the original and
   must not be used as a model. The original is https://github.com/ESZlab/SmithHunter.
-- The pipeline must run on a Linux server (university machine, reached over SSH).
+- The pipeline must run on a Linux server (university machine, VPN + SSH). The server reaches
+  GitHub but not Anthropic, so Claude cannot run there. Workflow: develop locally, verify with
+  GitHub Actions; the maintainer runs `git pull` + snakemake on the server and pastes back
+  logs and result tables (`origin_summary.tsv`, `loci.tsv`, `libraries.tsv`).
 - Plan with literature review: https://claude.ai/artifact/D5movNUPfevGUTpjd3qiPP
 
 ## Goal
