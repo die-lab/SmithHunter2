@@ -65,12 +65,15 @@ variable `three_score` in the filter.
   degradation into gene-sized loci, so loci are now split at 5' end peaks (Poisson test against the
   local background, `split_peaks` in `loci.py`); the expression filter subtracts each sample's
   background. Simulations: 44/44 outcomes as expected from 0% to 30% degradation, several seeds.
-- Open: on `.test` (real reads) weak satellite peaks 3-15 nt from strong loci pass the filters
-  (12 -> 48 passing loci). To discuss: merge peaks close to a much stronger one.
+- On `.test` (real reads) peaks produced weak satellites 3-15 nt from strong loci and clusters of
+  comparable peaks (imprecise 5' ends), and five_score inside a +-2 nt peak is always ~1.
+  Fixed with satellite merging (<= 10 nt, < 10% of the reads) and the `isolation` filter (share of
+  reads starting within 10 nt of the peak, >= 0.5). `.test`: 25 passing loci, 9 of the 12 found by
+  overlap blocks; the 3 lost have 0-3 reads per sample within +-2 nt of their 5' end.
 
 ## Next steps
 
-1. Satellite peaks on real data (see Status), then legacy comparison with v0 output on the same data.
+1. Run on a full-size real library to tune thresholds, then legacy comparison with v0 output on the same data.
 2. Module B (targets), then HTML report, then optional tools (MINTmap, Kraken2 on unmapped
    reads, ShortStack cross-check, AGO-CLIP chimeras).
 

@@ -24,10 +24,13 @@ rule discover:
         peak_window=LOCI.get("peak_window", 2),
         peak_pvalue=LOCI.get("peak_pvalue", 0.001),
         background_flank=LOCI.get("background_flank", 50),
+        satellite_distance=LOCI.get("satellite_distance", 10),
+        satellite_fraction=LOCI.get("satellite_fraction", 0.1),
         n_thre=ENDS.get("n_thre", 0.5),
         penalty=ENDS.get("penalty", 0.1),
         min_five=ENDS.get("min_five_score", 0.5),
         min_three=ENDS.get("min_three_score", 0.0),
+        min_isolation=ENDS.get("min_isolation", 0.5),
     log:
         OUT / "logs/discover.log",
     conda:
@@ -38,6 +41,9 @@ rule discover:
         "--merge-gap {params.merge_gap} --min-rpm {params.min_rpm} --min-count {params.min_count} "
         "{params.min_samples} {params.peaks} --peak-window {params.peak_window} "
         "--peak-pvalue {params.peak_pvalue} --background-flank {params.background_flank} "
+        "--satellite-distance {params.satellite_distance} "
+        "--satellite-fraction {params.satellite_fraction} "
         "--n-thre {params.n_thre} --penalty {params.penalty} --min-five {params.min_five} "
-        "--min-three {params.min_three} --loci {output.loci} --reads {output.reads} "
+        "--min-three {params.min_three} --min-isolation {params.min_isolation} "
+        "--loci {output.loci} --reads {output.reads} "
         "--fasta {output.fasta} > {log} 2>&1"

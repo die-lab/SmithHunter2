@@ -74,7 +74,11 @@ taken from the most to the least abundant: a position, with the reads starting u
 above the local background (Poisson test). The background is the mean number of reads
 starting at each position within `background_flank` bases, leaving out stronger peaks.
 Reads claimed by no peak (typically degradation fragments) form **background loci**,
-which are reported but never pass. A sample supports a peak locus when the locus is
+which are reported but never pass. A weak peak within `satellite_distance` bases of a
+peak with ten times more reads (`satellite_fraction`) is taken as a 5' variant of it and
+joins its locus. The **isolation** of a locus is the share of all reads starting within
+`satellite_distance` bases of its peak that belong to it: regions with scattered 5'
+ends, or minor neighbours of a stronger peak, have low isolation and do not pass. A sample supports a peak locus when the locus is
 significantly above that sample's own background and, after subtracting it, reaches
 `min_count` and `min_rpm`. With `peaks: false`, every block is one locus.
 
@@ -146,11 +150,13 @@ Other settings, with their defaults:
 | `loci.peak_window` | 2 | reads starting this close to a peak belong to it |
 | `loci.peak_pvalue` | 0.001 | Poisson test of a peak against the local background |
 | `loci.background_flank` | 50 | bases on each side used to estimate the background |
+| `loci.satellite_distance` / `satellite_fraction` | 10 / 0.1 | a weaker peak this close, with less than this share of reads, joins the stronger one |
 | `loci.multimap` | `fractional` | `fractional` or `unique` within one genome |
 | `loci.min_rpm` / `min_count` | 5 / 5 | per-sample thresholds (reads per million and raw reads) |
 | `loci.min_samples` | n − 1 | samples that must reach both thresholds |
 | `ends.min_five_score` | 0.5 | a locus passes if its 5' score is above this |
 | `ends.min_three_score` | 0.0 | and its 3' score is at least this |
+| `ends.min_isolation` | 0.5 | and its isolation is at least this |
 
 The end score of a locus is 1 when one position holds at least half of the reads
 (`n_thre`), 0.5 for two adjacent positions, and lower for scattered ends.
@@ -181,6 +187,7 @@ Main columns of `loci.tsv`:
 | `rpm_<sample>` | reads per million of the trimmed library |
 | `rpm_genome_<sample>` | reads per million of the reads assigned to that genome |
 | `five_score`, `three_score` | end precision (see above); `*_dominant_fraction` = share of the top position |
+| `isolation` | share of the reads starting near the peak that belong to the locus |
 | `annotation_class`, `annotation_orientation` | most specific overlapping GFF3 feature and its strand relation |
 | `expression_pass`, `ends_pass`, `pass` | filter results |
 
@@ -214,10 +221,9 @@ simulated small RNA.
 ## Known limitations
 
 - On simulated data, every small RNA has the expected outcome with up to 30% of the
-  reads from degradation. Real degradation is less uniform than simulated degradation:
-  on real data weak secondary peaks can appear a few bases from a strong small RNA
-  and pass the filters when the libraries are small. Check loci that lie close
-  together, and their `background_count`.
+  reads from degradation. Real degradation is less uniform than the simulated one;
+  satellite merging and the isolation filter handle the secondary peaks seen on real
+  data, but thresholds may need tuning on deep libraries.
 - A peak locus also contains degradation fragments that start at the same position,
   so its `end` can extend beyond the small RNA; `rep_sequence` is the reliable sequence.
 - Reads from 3' tRNA fragments carry a non-templated CCA and usually do not align.

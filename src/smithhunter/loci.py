@@ -11,7 +11,11 @@ Loci are built in two steps.
    significantly above the local background (Poisson test, ``peak_pvalue``). The
    background is the mean number of reads starting at each position within
    ``background_flank`` bases, leaving out the positions of stronger peaks already called. Reads claimed by no peak are chained again into
-   ``background`` loci, which are reported but never pass the filters.
+   ``background`` loci, which are reported but never pass the filters. A weak peak close
+   to a much stronger one (``satellite_distance``, ``satellite_fraction``) is taken as a
+   5' variant of it and joins its locus. The ``isolation`` of a peak locus is the share
+   of the reads starting within ``satellite_distance`` bases of the peak that belong to
+   it: low values mean a region with scattered 5' ends, or a minor neighbour of a peak.
 
 A sample supports a peak locus when its reads are significantly above that sample's own
 local background and, after subtracting the background, reach ``min_count`` and ``min_rpm``.
@@ -53,6 +57,7 @@ class Locus:
     wraps: bool = False
     kind: str = "peak"
     background: list[float] = field(default_factory=list)  # expected reads per sample
+    isolation: float = 1.0  # share of the reads starting near the peak that are in the locus
 
 
 def merge_members(members: list[Member], gap: int) -> list[tuple[int, int, list[Member]]]:
@@ -100,9 +105,14 @@ def poisson_significant(k: float, background: float, pvalue: float) -> bool:
     return 1.0 - cdf < pvalue
 
 
-def split_peaks(block: Locus, window: int = 2, pvalue: float = 0.001,
-                flank: int = 50, gap: int = 0) -> list[Locus]:
-    """Split one block of overlapping reads into peak loci and background loci."""
+def split_peaks(block: Locus, window: int = 2, pvalue: float = 0.001, flank: int = 50,
+                gap: int = 0, satellite_distance: int = 10,
+                satellite_fraction: float = 0.1) -> list[Locus]:
+    """Split one block of overlapping reads into peak loci and background loci.
+
+    A significant peak within ``satellite_distance`` bases of a stronger peak, with less
+    than ``satellite_fraction`` of its reads, is a satellite: its reads join that peak.
+    """
     profile: dict[int, float] = defaultdict(float)
     per_sample: dict[int, list[float]] = {}
     n = max((len(m.counts) for m in block.members), default=0)
@@ -114,6 +124,7 @@ def split_peaks(block: Locus, window: int = 2, pvalue: float = 0.001,
             acc[i] += c
     claimed: dict[int, int] = {}
     peaks: list[int] = []
+    peak_reads: list[float] = []
     backgrounds: list[list[float]] = []
     for pos in sorted(profile, key=lambda p: (-profile[p], p)):
         if pos in claimed:
@@ -121,25 +132,39 @@ def split_peaks(block: Locus, window: int = 2, pvalue: float = 0.001,
         near = [q for q in range(pos - window, pos + window + 1)
                 if q in profile and q not in claimed]
         reads = sum(profile[q] for q in near)
-        around = [profile.get(q, 0.0) for q in range(pos - flank, pos + flank + 1)
+        around = [q for q in range(pos - flank, pos + flank + 1)
                   if abs(q - pos) > window and q not in claimed]
-        background = sum(around) / len(around) * (2 * window + 1) if around else 0.0
-        if poisson_significant(reads, background, pvalue):
-            flank_pos = [q for q in range(pos - flank, pos + flank + 1)
-                         if abs(q - pos) > window and q not in claimed]
-            backgrounds.append([sum(per_sample[q][i] for q in flank_pos if q in per_sample)
-                                / len(flank_pos) * (2 * window + 1) for i in range(n)])
-            for q in near:
-                claimed[q] = len(peaks)
+        scale = (2 * window + 1) / len(around) if around else 0.0
+        background = sum(profile.get(q, 0.0) for q in around) * scale
+        if not poisson_significant(reads, background, pvalue):
+            continue
+        sample_bg = [sum(per_sample[q][i] for q in around if q in per_sample) * scale
+                     for i in range(n)]
+        parent = next((i for i, p in enumerate(peaks) if abs(p - pos) <= satellite_distance
+                       and reads < satellite_fraction * peak_reads[i]), None)
+        if parent is None:
+            parent = len(peaks)
             peaks.append(pos)
+            peak_reads.append(0.0)
+            backgrounds.append([0.0] * n)
+        peak_reads[parent] += reads
+        backgrounds[parent] = [a + b for a, b in zip(backgrounds[parent], sample_bg)]
+        for q in near:
+            claimed[q] = parent
 
     groups: list[list[Member]] = [[] for _ in peaks]
     rest: list[Member] = []
     for m in block.members:
         idx = claimed.get(five_prime(m, block.strand))
         (rest if idx is None else groups[idx]).append(m)
-    loci = [Locus(block.genome, block.contig, block.strand, min(m.start for m in ms),
-                  max(m.end for m in ms), ms, background=bg) for ms, bg in zip(groups, backgrounds)]
+    loci = []
+    for pos, ms, bg in zip(peaks, groups, backgrounds):
+        nearby = sum(profile.get(q, 0.0) for q in range(pos - satellite_distance,
+                                                       pos + satellite_distance + 1))
+        own = sum(m.count for m in ms)
+        loci.append(Locus(block.genome, block.contig, block.strand, min(m.start for m in ms),
+                          max(m.end for m in ms), ms, background=bg,
+                          isolation=own / max(own, nearby) if own else 0.0))
     loci += [Locus(block.genome, block.contig, block.strand, s, e, ms, kind="background")
              for s, e, ms in merge_members(rest, gap)]
     return loci
@@ -171,7 +196,8 @@ def load_counts(path: str):
 def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs_path,
              merge_gap=0, min_rpm=5.0, min_count=1, min_samples=None, n_thre=0.5, penalty=0.1,
              min_five=0.5, min_three=0.0, peaks=True, peak_window=2, peak_pvalue=0.001,
-             background_flank=50):
+             background_flank=50, satellite_distance=10, satellite_fraction=0.1,
+             min_isolation=0.5):
     samples, counts = load_counts(counts_path)
     library = {r["sample"]: float(r["reads_kept"]) for r in read_tsv(libraries_path)}
     genomes = {g["name"]: g for g in read_tsv(genomes_path)}
@@ -207,7 +233,8 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
             if not peaks:
                 loci.append(block)
                 continue
-            for locus in split_peaks(block, peak_window, peak_pvalue, background_flank, merge_gap):
+            for locus in split_peaks(block, peak_window, peak_pvalue, background_flank, merge_gap,
+                                     satellite_distance, satellite_fraction):
                 loci.append(fold_origin(locus, length, circular))
     loci.sort(key=lambda l: (l.genome, l.contig, l.start, l.strand))
 
@@ -261,7 +288,8 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
                           "annotation_orientation": ""}
 
         expr_pass = n_pass >= min_samples
-        ends_pass = five_score > min_five and three_score >= min_three
+        ends_pass = (five_score > min_five and three_score >= min_three
+                     and locus.isolation >= min_isolation)
         candidate = locus.kind == "peak"
         row = {
             "locus_id": locus_id, "genome": locus.genome, "contig": locus.contig,
@@ -275,6 +303,7 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
             "samples_passing_rpm": n_pass,
             "five_score": round(five_score, 4), "five_dominant_fraction": round(five_dom, 4),
             "three_score": round(three_score, 4), "three_dominant_fraction": round(three_dom, 4),
+            "isolation": round(locus.isolation, 4),
             **annotation,
             "expression_pass": int(expr_pass), "ends_pass": int(ends_pass),
             "pass": int(candidate and expr_pass and ends_pass),
@@ -291,7 +320,7 @@ LOCUS_COLUMNS = [
     "locus_id", "genome", "contig", "start", "end", "strand", "span", "wraps_origin",
     "locus_type", "rep_id", "rep_sequence", "rep_length", "rep_start", "rep_end", "unique_reads",
     "total_count", "background_count", "samples_passing_rpm", "five_score", "five_dominant_fraction",
-    "three_score", "three_dominant_fraction", "annotation_class", "annotation_types",
+    "three_score", "three_dominant_fraction", "isolation", "annotation_class", "annotation_types",
     "annotation_names", "annotation_orientation", "expression_pass", "ends_pass", "pass",
 ]
 READ_COLUMNS = ["locus_id", "read_id", "sequence", "start", "end", "weight", "count"]
