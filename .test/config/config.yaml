@@ -1,0 +1,39 @@
+# Integration test on the SmithHunter v0 example (heavily subset Ceratitis capitata data).
+# Run from the .test directory: snakemake -s ../workflow/Snakefile --cores 2
+samples: config/samples.tsv
+outdir: results
+threads: 2
+
+genomes:
+  mito:
+    fasta: data/test_mit.fasta
+    role: focus
+    topology: circular
+    targets: ago
+  nuclear:
+    fasta: data/test_nuc.fasta
+    role: exclude
+
+ambiguous: report
+
+trimming:
+  adapter_r1: TGGAATTCTCGGGTGCCAAGG
+  adapter_r2: GATCGTCGGACTGTAGAACTCTGAAC
+  min_length: 18
+  max_length: 35
+
+mapping:
+  mismatches: 1
+  max_hits: 50
+
+loci:
+  merge_gap: 0
+  multimap: fractional
+  min_rpm: 5
+  min_samples: null
+
+ends:
+  n_thre: 0.5
+  penalty: 0.1
+  min_five_score: 0.5
+  min_three_score: 0.0

@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pytest
+      - run: pytest -v
+
+  workflow:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+      - name: Run module A on the v0 example data
+        working-directory: .test
+        run: snakemake -s ../workflow/Snakefile --cores 2 --printshellcmds
+      - name: Show results
+        if: always()
+        working-directory: .test/results
+        run: |
+          for f in logs/*.log logs/*/*.log; do echo "== $f"; tail -n 30 "$f"; done
+          echo "== origin_summary.tsv"; cat origin/origin_summary.tsv || true
+          echo "== loci passing filters"; awk -F'\t' 'NR==1 || $27==1' discovery/loci.tsv | cut -f1-8,10,15,17-24 || true
+          echo "== candidates.fasta"; cat discovery/candidates.fasta || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            .test/results/discovery
+            .test/results/origin/*.tsv
+            .test/results/collapsed/libraries.tsv
+            .test/results/logs

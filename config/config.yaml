@@ -1,0 +1,57 @@
+# SmithHunter2 configuration. Paths are relative to the directory snakemake runs in.
+
+samples: config/samples.tsv   # TSV: sample, fq1, fq2 (fq2 empty for single-end)
+outdir: results
+threads: 8
+
+# Every genome present in the sample. The combined reference holds all of them, so
+# each read is assigned to the genome it aligns to best.
+#   role: focus    -> loci are defined, annotated and passed to target prediction
+#   role: exclude  -> the genome only competes for reads; its reads are counted, then dropped
+#   topology: circular -> reads across the origin are handled automatically
+#   length: [min, max] -> read length range for this genome (default: trimming range)
+#   targets: ago | bacterial | none -> interaction model used by module B (not yet implemented)
+genomes:
+  mito:
+    fasta: data/organism_mt.fasta
+    role: focus
+    topology: circular
+    annotation: data/organism_mt.gff3   # optional, e.g. from MITOS2
+    targets: ago
+  nuclear:
+    fasta: data/organism_nuc.fasta
+    role: exclude
+  # symbiont:
+  #   fasta: data/symbiont.fasta
+  #   role: focus
+  #   topology: circular
+  #   length: [18, 40]
+  #   targets: bacterial
+
+# Reads aligning equally well to more than one genome, at least one of them focus:
+#   discard -> dropped; report -> listed in origin tables, not used for loci;
+#   split   -> the read is shared among all its best alignments
+ambiguous: report
+
+trimming:
+  adapter_r1: TGGAATTCTCGGGTGCCAAGG          # empty -> fastp autodetection
+  adapter_r2: GATCGTCGGACTGTAGAACTCTGAAC     # paired-end only
+  min_length: 18
+  max_length: 35
+  extra: ""                                  # extra fastp arguments
+
+mapping:
+  mismatches: 1      # bowtie -v
+  max_hits: 50       # reads with more equally best alignments are set aside
+
+loci:
+  merge_gap: 0           # join alignments closer than this many bases
+  multimap: fractional   # fractional | unique (within one genome)
+  min_rpm: 5             # reads per million (library total) in one sample
+  min_samples: null      # samples that must reach min_rpm; null -> number of samples - 1
+
+ends:
+  n_thre: 0.5            # fraction of reads used to find the dominant end positions
+  penalty: 0.1
+  min_five_score: 0.5    # pass if five_score > this
+  min_three_score: 0.0   # pass if three_score >= this
