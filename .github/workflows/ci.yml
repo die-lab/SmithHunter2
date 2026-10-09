@@ -64,8 +64,10 @@ jobs:
           python -m smithhunter simulate --outdir sim_clean --reads 100000 --degradation 0
           cd sim_clean
           snakemake -s ../workflow/Snakefile --cores 2
+          snakemake -s ../workflow/Snakefile --cores 2 targets
           python -m smithhunter evaluate | tee summary.txt
           grep -q "outcome as expected: .* (100%)" summary.txt
+          grep -q "Planted target sites found with their class (or better): 15/15" summary.txt
       - name: Library with degradation (informative, does not fail)
         run: |
           export PYTHONPATH=$PWD/src
@@ -80,3 +82,4 @@ jobs:
           path: |
             sim_*/evaluation
             sim_*/truth
+            sim_*/results/targets

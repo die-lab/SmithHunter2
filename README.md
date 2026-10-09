@@ -25,7 +25,9 @@ SmithHunter2 is a rewrite of [SmithHunter](https://github.com/ESZlab/SmithHunter
 (small mitochondrial highly transcribed RNAs) but no longer limited to mitochondria.
 
 > **Status: early development.** Module A (small RNA discovery) works and is tested.
-> Module B (target prediction) is being designed and is not yet available.
+> Module B (target prediction) is in progress: seed sites are available, energy and
+> accessibility scores and precursor folding are next
+> ([design](docs/module_b_design.md)).
 
 ## How it works
 
@@ -191,6 +193,45 @@ Main columns of `loci.tsv`:
 | `annotation_class`, `annotation_orientation` | most specific overlapping GFF3 feature and its strand relation |
 | `expression_pass`, `ends_pass`, `pass` | filter results |
 
+## Target prediction (module B, in progress)
+
+After reviewing the candidates of module A, declare the transcripts to search as
+**target sets** and run the `targets` rule:
+
+```yaml
+target_sets:
+  host:
+    genome: data/organism_nuc.fasta
+    annotation: data/organism_nuc.gff3
+    regions: [three_prime_UTR]       # also five_prime_UTR, CDS, transcript
+targets:
+  candidates: results/discovery/candidates.fasta
+  seed: [2, 8]
+  decoys: 20
+```
+
+```bash
+snakemake -s /path/to/SmithHunter2/workflow/Snakefile --cores 8 targets
+```
+
+Every target set uses the general seed-based logic: canonical site classes (8mer,
+7mer-m8, 7mer-A1, 6mer, offset-6mer) of the seed at guide positions 2–8. Bacterial mode
+(no seed rule, windows around start codons) will be opt-in per target set
+(`mode: bacterial`) and is not implemented yet. Target regions come from a genome with
+its GFF3 (spliced, both strands; UTRs are derived from the CDS when the GFF has no UTR
+features) or from a transcripts FASTA.
+
+| file (`results/targets/<set>/`) | content |
+|---|---|
+| `sites.tsv` | every site: candidate, transcript, gene, class, position in the region and in the genome, distance from the region ends, AU content of the flanks, 3' supplementary pairing (guide 13–16) |
+| `targets.tsv` | one row per candidate and transcript: sites per class, best class |
+| `site_fdr.tsv` | sites per class for each candidate and for its dinucleotide-shuffled decoys |
+
+The decoys show how many sites a sequence of the same composition finds by chance.
+Expect this to be close to the real count: a seed match on its own does not make a
+target. Energy and accessibility scores per site (IntaRNA, RNAhybrid), with q-values from
+the same decoys, are the next step.
+
 ## Benchmark on simulated data
 
 `smithhunter simulate` writes a complete experiment with known truth: synthetic
@@ -241,9 +282,8 @@ they check that the workflow runs, not that the results are meaningful.
 
 ## Roadmap
 
-1. Module B: target prediction (seed match classes, IntaRNA and RNAhybrid, empirical
-   false discovery rate from shuffled small RNAs; seed rules for Argonaute-guided small
-   RNAs, start-codon windows for bacterial genomes) and precursor folding.
+1. Module B: IntaRNA and RNAhybrid scores per site with q-values from decoys, precursor
+   folding, then the opt-in bacterial mode.
 2. HTML report.
 
 ## Citation

@@ -63,3 +63,22 @@ ends:
   min_five_score: 0.5    # pass if five_score > this
   min_three_score: 0.0   # pass if three_score >= this
   min_isolation: 0.5     # and if this share of the reads starting near the peak are its own
+
+# ---------------------------------------------------------------------------------------
+# Module B (target prediction): snakemake -s workflow/Snakefile --cores 8 targets
+# Every target set is checked with the general seed-based logic; `mode: bacterial` is
+# opt-in (not implemented yet). A focus genome is tested against the sets listed in its
+# `target_sets` (e.g. `target_sets: [host]`), or against all sets when it lists none.
+target_sets:
+  host:
+    genome: data/organism_nuc.fasta          # genome + GFF3 (spliced, strand-aware) ...
+    annotation: data/organism_nuc.gff3
+    # transcripts: data/transcripts.fasta    # ... or transcripts, with an optional
+    # region_table: data/regions.tsv         # table: transcript, region, start, end (1-based)
+    regions: [three_prime_UTR]               # also: five_prime_UTR, CDS, transcript
+    whole_transcript_if_no_utr: false
+
+targets:
+  candidates: results/discovery/candidates.fasta   # edit a copy to review candidates
+  seed: [2, 8]                                     # guide positions; v0 used [4, 10]
+  decoys: 20                                       # dinucleotide-shuffled decoys each

@@ -103,6 +103,55 @@ def cmd_evaluate(args):
     print(run(args.truth, args.results, args.out), end="")
 
 
+def cmd_regions(args):
+    from .targets.regions import regions_from_genome, regions_from_transcripts, write_regions
+    wanted = args.regions.split(",")
+    if args.genome:
+        if not args.annotation:
+            sys.exit("--genome needs --annotation (GFF3)")
+        regions = regions_from_genome(args.genome, args.annotation, wanted, args.whole_if_missing)
+    elif args.transcripts:
+        regions = regions_from_transcripts(args.transcripts, args.table, wanted,
+                                           args.whole_if_missing)
+    else:
+        sys.exit("give --genome and --annotation, or --transcripts")
+    write_regions(args.out, regions)
+    print(f"{len(regions)} regions, {sum(len(r.sequence) for r in regions)} nt")
+
+
+def parse_seed(text: str) -> tuple[int, int]:
+    a, b = (int(x) for x in text.split("-"))
+    if not 1 <= a < b:
+        sys.exit(f"--seed must be START-END with 1 <= START < END, got {text}")
+    return a, b
+
+
+def cmd_decoys(args):
+    from .targets.pipeline import read_candidates
+    from .targets.shuffle import make_decoys
+    candidates = [(cid, seq) for cid, _, seq in read_candidates(args.candidates)]
+    decoys = make_decoys(candidates, args.n, parse_seed(args.seed), args.random_seed)
+    with open_text(args.out, "wt") as fh:
+        for did, _, seq in decoys:
+            fh.write(f">{did}\n{seq}\n")
+    print(f"{len(decoys)} decoys for {len(candidates)} candidates")
+
+
+def cmd_sites(args):
+    from .targets.pipeline import read_candidates, read_decoys, run_sites, write_outputs
+    from .targets.regions import read_regions
+    genomes = set(filter(None, args.genomes.split(","))) if args.genomes else set()
+    candidates = [(cid, seq) for cid, genome, seq in read_candidates(args.candidates)
+                  if not genomes or not genome or genome in genomes]
+    ids = {cid for cid, _ in candidates}
+    decoys = [d for d in read_decoys(args.decoys) if d[1] in ids] if args.decoys else []
+    regions = read_regions(args.regions)
+    classes = args.classes.split(",") if args.classes else None
+    result = run_sites(candidates, decoys, regions, parse_seed(args.seed), classes)
+    write_outputs(*result, args.sites, args.targets, args.fdr)
+    print(f"{len(candidates)} candidates, {len(result[1])} sites, {len(result[2])} targets")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="smithhunter", description=__doc__)
     p.add_argument("--version", action="version", version=__version__)
@@ -190,6 +239,38 @@ def main(argv=None):
     s.add_argument("--results", default="results")
     s.add_argument("--out", default="evaluation")
     s.set_defaults(func=cmd_evaluate)
+
+    s = sub.add_parser("regions", help="target regions from a genome + GFF3 or transcripts")
+    s.add_argument("--genome")
+    s.add_argument("--annotation")
+    s.add_argument("--transcripts")
+    s.add_argument("--table", default="", help="transcript, region, start, end (1-based)")
+    s.add_argument("--regions", default="three_prime_UTR",
+                   help="comma-separated: three_prime_UTR, five_prime_UTR, CDS, transcript")
+    s.add_argument("--whole-if-missing", action="store_true",
+                   help="use the whole transcript when the wanted regions are missing")
+    s.add_argument("--out", required=True)
+    s.set_defaults(func=cmd_regions)
+
+    s = sub.add_parser("decoys", help="dinucleotide-shuffled decoys of the candidates")
+    s.add_argument("--candidates", required=True)
+    s.add_argument("--n", type=int, default=20)
+    s.add_argument("--seed", default="2-8")
+    s.add_argument("--random-seed", type=int, default=1)
+    s.add_argument("--out", required=True)
+    s.set_defaults(func=cmd_decoys)
+
+    s = sub.add_parser("sites", help="seed sites of candidates and decoys, site-count FDR")
+    s.add_argument("--candidates", required=True)
+    s.add_argument("--decoys", default="")
+    s.add_argument("--regions", required=True)
+    s.add_argument("--genomes", default="", help="only candidates of these genomes")
+    s.add_argument("--seed", default="2-8")
+    s.add_argument("--classes", default="")
+    s.add_argument("--sites", required=True)
+    s.add_argument("--targets", required=True)
+    s.add_argument("--fdr", required=True)
+    s.set_defaults(func=cmd_sites)
 
     args = p.parse_args(argv)
     args.func(args)
