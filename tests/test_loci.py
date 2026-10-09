@@ -127,3 +127,20 @@ def test_fold_origin():
     assert (locus.start, locus.end, locus.wraps) == (5, 20, False)
     locus = Locus("mt", "chrM", "+", 95, 110, [Member("x", 95, 110, 1, 1)])
     assert fold_origin(locus, 100, True).wraps
+
+
+def test_split_peaks_joins_satellites_to_stronger_peak():
+    members = [Member(f"a{i}", 100, 122, 1, 10.0) for i in range(30)]       # 300 reads
+    members += [Member(f"s{i}", 106, 128, 1, 2.0) for i in range(10)]       # 20 reads, 6 nt away
+    members += [Member(f"b{i}", 116, 138, 1, 10.0) for i in range(10)]      # 100 reads, 16 nt away
+    loci = split_peaks(Locus("mt", "chrM", "+", 100, 138, members))
+    groups = sorted("".join(sorted({m.read_id[0] for m in l.members})) for l in loci)
+    assert groups == ["as", "b"]
+    a = next(l for l in loci if l.start == 100)
+    assert a.isolation == 1.0  # b starts 16 nt away, outside satellite_distance
+    # four comparable peaks 3 nt apart: none is isolated
+    spread = [Member(f"{p}{i}", p, p + 22, 1, 10.0) for p in (200, 205, 210, 215) for i in range(5)]
+    loci = split_peaks(Locus("mt", "chrM", "+", 200, 237, spread))
+    assert len(loci) == 4 and all(l.isolation < 0.5 for l in loci)
+    loci = split_peaks(Locus("mt", "chrM", "+", 100, 138, members), satellite_distance=0)
+    assert sorted("".join(sorted({m.read_id[0] for m in l.members})) for l in loci) == ["a", "b", "s"]

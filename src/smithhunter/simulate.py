@@ -576,6 +576,8 @@ loci:
   peak_window: 2
   peak_pvalue: 0.001
   background_flank: 50
+  satellite_distance: 10
+  satellite_fraction: 0.1
   multimap: fractional
   min_rpm: 5
   min_count: 5
@@ -586,6 +588,7 @@ ends:
   penalty: 0.1
   min_five_score: 0.5
   min_three_score: 0.0
+  min_isolation: 0.5
 """)
 
 

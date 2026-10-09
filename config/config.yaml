@@ -50,6 +50,8 @@ loci:
   peak_window: 2         # reads starting within this many bases of a peak belong to it
   peak_pvalue: 0.001     # Poisson test of a peak against the local background
   background_flank: 50   # bases on each side used to estimate the background
+  satellite_distance: 10 # a weak peak this close to a stronger one ...
+  satellite_fraction: 0.1  # ... with less than this share of its reads joins it
   multimap: fractional   # fractional | unique (within one genome)
   min_rpm: 5             # reads per million (library total) in one sample
   min_count: 5           # and at least this many reads in that sample
@@ -60,3 +62,4 @@ ends:
   penalty: 0.1
   min_five_score: 0.5    # pass if five_score > this
   min_three_score: 0.0   # pass if three_score >= this
+  min_isolation: 0.5     # and if this share of the reads starting near the peak are its own
