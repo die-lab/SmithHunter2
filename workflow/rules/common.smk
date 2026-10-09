@@ -1,5 +1,6 @@
 import csv
 import json
+import sys
 from pathlib import Path
 
 OUT = Path(config.get("outdir", "results"))
@@ -60,3 +61,45 @@ def fastp_args(wildcards, input, output):
     if TRIM.get("extra"):
         args.append(TRIM["extra"])
     return " ".join(args)
+
+
+# Module B. Every target set uses the general seed-based logic (mode "ago") unless it is
+# declared "bacterial". A focus genome is tested against the sets it lists in
+# `target_sets`; with no list, against every set (the old `targets: ago | bacterial`
+# field selects the sets of that mode, `targets: none` none).
+TARGET_SETS = config.get("target_sets") or {}
+TARGETS_CFG = config.get("targets") or {}
+CANDIDATES = TARGETS_CFG.get("candidates", str(OUT / "discovery/candidates.fasta"))
+SEED = "-".join(str(x) for x in TARGETS_CFG.get("seed", [2, 8]))
+
+
+def set_mode(name):
+    mode = TARGET_SETS[name].get("mode", "ago")
+    if mode not in ("ago", "bacterial"):
+        raise ValueError(f"config: target set {name!r} mode must be ago or bacterial")
+    return mode
+
+
+def target_sets_of(genome):
+    entry = GENOMES[genome]
+    if entry.get("role", "focus") != "focus":
+        return []
+    if "target_sets" in entry:
+        unknown = set(entry["target_sets"]) - set(TARGET_SETS)
+        if unknown:
+            raise ValueError(f"config: genome {genome!r} lists unknown target sets {unknown}")
+        return list(entry["target_sets"])
+    legacy = entry.get("targets")
+    if legacy == "none":
+        return []
+    if legacy in ("ago", "bacterial"):
+        return [s for s in TARGET_SETS if set_mode(s) == legacy]
+    return list(TARGET_SETS)
+
+
+def genomes_of_set(name):
+    return [g for g in GENOMES if name in target_sets_of(g)]
+
+
+AGO_SETS = [s for s in TARGET_SETS if set_mode(s) == "ago" and genomes_of_set(s)]
+BACTERIAL_SETS = [s for s in TARGET_SETS if set_mode(s) == "bacterial"]

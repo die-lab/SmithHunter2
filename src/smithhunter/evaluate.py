@@ -223,11 +223,56 @@ def report(rows, false_pos, truth_dir, results_dir) -> str:
     return "\n".join(lines) + "\n"
 
 
+def parse_genomic(text: str):
+    """'chrN:10-17(+)' -> (contig, start, end), 1-based inclusive."""
+    contig, rest = text.rsplit(":", 1)
+    a, b = rest.split("(")[0].split("-")
+    return contig, int(a), int(b)
+
+
+def evaluate_targets(truth_dir: str, results_dir: str, rows: list[dict]):
+    """Planted seed sites (truth/targets.tsv) found in module B's sites.tsv, per target set."""
+    planted_path = Path(truth_dir) / "targets.tsv"
+    site_files = sorted(Path(results_dir).glob("targets/*/sites.tsv"))
+    if not planted_path.exists() or not site_files:
+        return [], ""
+    from .targets.pipeline import read_candidates
+    from .targets.sites import CANONICAL
+    by_rep = {seq: cid for cid, _, seq in
+              read_candidates(f"{results_dir}/discovery/candidates.fasta")}
+    candidate_of = {r["feature_id"]: by_rep.get(r.get("rep_sequence", "")) for r in rows
+                    if r["observed"] == "pass"}
+    sites = [s for path in site_files for s in read_tsv(str(path))]
+    order = {c: i for i, c in enumerate(CANONICAL)}
+    out = []
+    for p in read_tsv(str(planted_path)):
+        cid = candidate_of.get(p["feature_id"])
+        start, end = int(p["genomic_start"]), int(p["genomic_end"])
+        best = ""
+        for s in sites:
+            if s["candidate"] != cid or s["transcript"] != p["transcript"] or not s["genomic"]:
+                continue
+            _, a, b = parse_genomic(s["genomic"])
+            if a <= end and b >= start and (not best or order[s["site_class"]] < order[best]):
+                best = s["site_class"]
+        found = bool(best) and order[best] <= order[p["site_class"]]
+        out.append({**p, "candidate": cid or "", "found_class": best, "found": int(found)})
+    n = sum(r["found"] for r in out)
+    text = f"Planted target sites found with their class (or better): {n}/{len(out)}\n"
+    text += "".join(f"  missing: {r['feature_id']} {r['site_class']} in {r['transcript']} "
+                    f"(candidate {r['candidate'] or 'none'})\n" for r in out if not r["found"])
+    return out, text
+
+
 def run(truth_dir: str, results_dir: str, outdir: str) -> str:
     Path(outdir).mkdir(parents=True, exist_ok=True)
     rows, false_pos, _ = evaluate(truth_dir, results_dir)
     write_tsv(f"{outdir}/smallrnas.tsv", rows, ROW_COLUMNS)
     write_tsv(f"{outdir}/false_positives.tsv", false_pos, FP_COLUMNS)
     text = report(rows, false_pos, truth_dir, results_dir)
+    planted, target_text = evaluate_targets(truth_dir, results_dir, rows)
+    if planted:
+        write_tsv(f"{outdir}/target_sites.tsv", planted, list(planted[0]))
+        text += "\n" + target_text
     Path(f"{outdir}/summary.txt").write_text(text)
     return text

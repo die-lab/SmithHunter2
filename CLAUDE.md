@@ -74,7 +74,10 @@ variable `three_score` in the filter.
 ## Next steps
 
 1. Run on a full-size real library to tune thresholds, then legacy comparison with v0 output on the same data.
-2. Module B (targets; design in `docs/module_b_design.md`, open decisions in its section 11), then HTML report, then optional tools (MINTmap, Kraken2 on unmapped
+2. Module B (design in `docs/module_b_design.md`). Step 1 done: `regions`, `decoys`, `sites`
+   subcommands and rule `targets`; the simulator plants 15 seed sites in nuclear 3'UTRs and
+   `evaluate` checks them (15/15). Site-count FDR is ~1 by nature: ranking needs step 2
+   (IntaRNA, RNAhybrid with RNAcalibrate, q-values from decoys)., then HTML report, then optional tools (MINTmap, Kraken2 on unmapped
    reads, ShortStack cross-check, AGO-CLIP chimeras).
 
 ## Commands

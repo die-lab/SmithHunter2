@@ -76,7 +76,7 @@ target_sets:
     annotation: data/nuclear.gff3
     # ... or transcripts + an optional table of regions in transcript coordinates
     # transcripts: data/transcripts.fasta
-    # regions: data/transcript_regions.tsv   # transcript, region, start, end (1-based)
+    # region_table: data/regions.tsv         # transcript, region, start, end (1-based)
     regions: [three_prime_UTR]               # add five_prime_UTR, CDS if wanted
     whole_transcript_if_no_utr: false        # many non-model transcriptomes lack UTRs
   symbiont_mrna:
@@ -293,6 +293,13 @@ so module A can be run alone and reviewed first.
 - **CI**: the simulation run, with a small UTRome and few decoys.
 
 ## 10. Implementation order
+
+Progress: step 1 is implemented (`regions`, `decoys`, `sites` subcommands, rule
+`targets`). On the simulation all 15 planted sites are found with their class. As
+expected, the site-count FDR is close to 1: a seed match is about as frequent for a real
+small RNA as for its decoys. Counting sites shows how much of the signal is background
+but does not rank targets. Site-level q-values need the scores of step 2.
+
 
 1. Regions, site scan, decoys, FDR on site counts only (no external tools). This is
    already a usable result: seed sites by class with an empirical FDR.

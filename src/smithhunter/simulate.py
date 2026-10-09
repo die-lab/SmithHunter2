@@ -8,7 +8,9 @@ Genomes
   two rRNAs and a control region, on both strands.
 - ``nuclear`` (exclude): random sequence holding NUMTs (mitochondrial segments, one
   identical and one differing by a single base inside a smallRNA), a repeat with more
-  copies than ``max_hits``, piRNA-like clusters and nuclear smallRNAs.
+  copies than ``max_hits``, piRNA-like clusters, nuclear smallRNAs, and 50 two-exon genes
+  (GFF3) whose 3'UTRs carry planted seed sites of mitochondrial smallRNAs (8mer for
+  srna_001-010, 7mer-m8 for srna_011-015; ``truth/targets.tsv``), to test module B.
 - ``bacterium`` (exclude): a contaminant with a multi-copy rRNA operon.
 
 Library content, with defaults taken from the small RNA-seq literature
@@ -344,6 +346,7 @@ class Simulator:
             s = place(len(repeat))
             seq[s:s + len(repeat)] = repeat
             repeat_pos.append(s)
+        genes = self.nuclear_genes(seq, place)
         nuc = Genome("nuclear", "chrN", "".join(seq), circular=False)
 
         weights = [rng.lognormvariate(0, 1.5) for _ in range(40)]
@@ -359,21 +362,73 @@ class Simulator:
             self.sources.append(Source(f"pirna_cluster_{i + 1}", "pirna", "nuclear_pirna",
                                        nuc.name, nuc.contig, s, s + 10_000, "+", "excluded",
                                        [mean] * p.samples, nuc.region(s, s + 10_000)))
-        ws = [rng.lognormvariate(0, 1) for _ in range(50)]
-        for i, w in enumerate(ws):
-            length = rng.randint(1000, 3000)
-            s = place(length)
-            strand = rng.choice("+-")
+        ws = [rng.lognormvariate(0, 1) for _ in genes]
+        for (gid, s, e, strand), w in zip(((g["id"], g["start"], g["end"], g["strand"])
+                                           for g in genes), ws):
             mean = COMPOSITION["nuclear_degradation"] * p.reads * w / sum(ws)
-            self.sources.append(Source(f"nuclear_gene_{i + 1:03d}", "degradation",
-                                       "nuclear_degradation", nuc.name, nuc.contig, s, s + length,
-                                       strand, "excluded", [mean] * p.samples,
-                                       nuc.region(s, s + length, strand)))
+            self.sources.append(Source(gid, "degradation", "nuclear_degradation", nuc.name,
+                                       nuc.contig, s, e, strand, "excluded", [mean] * p.samples,
+                                       nuc.region(s, e, strand)))
         self.sources.append(Source("nuclear_repeat", "repeat", "nuclear_repeat", nuc.name,
                                    nuc.contig, repeat_pos[0], repeat_pos[0] + 300, "+",
                                    "too_many_hits",
                                    [COMPOSITION["nuclear_repeat"] * p.reads] * p.samples, repeat))
         return nuc
+
+    def nuclear_genes(self, seq: list[str], place) -> list[dict]:
+        """50 two-exon genes with UTRs; seed sites of some mitochondrial smallRNAs are
+        planted in their 3'UTRs (8mer for srna_001-010, 7mer-m8 for srna_011-015)."""
+        rng = self.rng
+        genes = []
+        for i in range(50):
+            length = rng.randint(1000, 3000)
+            s = place(length)
+            strand = rng.choice("+-")
+            e1 = rng.randint(300, length // 2)
+            intron = rng.randint(80, 200)
+            first, last = (e1, length - e1 - intron) if strand == "+" else \
+                (length - e1 - intron, e1)
+            u5 = rng.randint(50, min(150, first - 50))
+            u3 = rng.randint(150, min(500, last - 50))
+            exons = [(s, s + e1), (s + e1 + intron, s + length)]
+            if strand == "+":
+                cds = (s + u5, s + length - u3)
+                utr3 = (s + length - u3, s + length)
+            else:
+                cds = (s + u3, s + length - u5)
+                utr3 = (s, s + u3)
+            genes.append({"id": f"nuclear_gene_{i + 1:03d}", "start": s, "end": s + length,
+                          "strand": strand, "exons": exons, "cds": cds, "utr3": utr3})
+
+        guides = [src for src in self.sources if src.category == "srna"][:15]
+        self.planted = []
+        for k, (guide, gene) in enumerate(zip(guides, genes)):
+            cls = "8mer" if k < 10 else "7mer-m8"
+            site = revcomp(guide.sequence[1:8]) + ("A" if cls == "8mer" else "C")
+            a, b = gene["utr3"]
+            pos = rng.randint(a + 20, b - 20 - len(site))
+            seq[pos:pos + len(site)] = list(site if gene["strand"] == "+" else revcomp(site))
+            self.planted.append({"feature_id": guide.id, "transcript": f"{gene['id']}.t1",
+                                 "gene": gene["id"], "site_class": cls,
+                                 "genomic_start": pos + 1, "genomic_end": pos + len(site)})
+        self.genes = genes
+        return genes
+
+    def write_nuclear_gff(self, path: Path, contig: str):
+        with open(path, "w") as fh:
+            fh.write("##gff-version 3\n")
+            for g in self.genes:
+                gid, strand = g["id"], g["strand"]
+                rows = [("gene", g["start"], g["end"], f"ID={gid};Name={gid}"),
+                        ("mRNA", g["start"], g["end"], f"ID={gid}.t1;Parent={gid}")]
+                rows += [("exon", s, e, f"Parent={gid}.t1") for s, e in g["exons"]]
+                cs, ce = g["cds"]
+                rows += [("CDS", max(s, cs), min(e, ce), f"Parent={gid}.t1")
+                         for s, e in g["exons"] if max(s, cs) < min(e, ce)]
+                for ftype, s, e, attrs in rows:
+                    phase = "0" if ftype == "CDS" else "."
+                    fh.write(f"{contig}\tsimulate\t{ftype}\t{s + 1}\t{e}\t.\t{strand}\t"
+                             f"{phase}\t{attrs}\n")
 
     def build_bacterium(self) -> Genome:
         p, rng = self.p, self.rng
@@ -469,6 +524,7 @@ class Simulator:
                 fh.write(f">{g.contig}\n")
                 for i in range(0, len(g.seq), 80):
                     fh.write(g.seq[i:i + 80] + "\n")
+        self.write_nuclear_gff(out / "data" / "nuclear.gff3", nuc.contig)
         with open(out / "data" / "mito.gff3", "w") as fh:
             fh.write("##gff-version 3\n")
             for ftype, name, s, e, strand in self.mito_features:
@@ -518,6 +574,10 @@ class Simulator:
                    "wraps_origin", "length", "sequence", "expected", "total_reads",
                    *[f"reads_{s}" for s in self.samples]]
         write_tsv(str(out / "truth" / "features.tsv"), rows, columns)
+
+        write_tsv(str(out / "truth" / "targets.tsv"), self.planted,
+                  ["feature_id", "transcript", "gene", "site_class", "genomic_start",
+                   "genomic_end"])
 
         groups: dict[str, list[int]] = {}
         for src in self.sources:
@@ -589,6 +649,18 @@ ends:
   min_five_score: 0.5
   min_three_score: 0.0
   min_isolation: 0.5
+
+# Module B: snakemake -s <SmithHunter2>/workflow/Snakefile --cores 2 targets
+target_sets:
+  host:                       # no mode: the general seed-based logic
+    genome: data/nuclear.fasta
+    annotation: data/nuclear.gff3
+    regions: [three_prime_UTR]
+
+targets:
+  candidates: results/discovery/candidates.fasta
+  seed: [2, 8]
+  decoys: 20
 """)
 
 
