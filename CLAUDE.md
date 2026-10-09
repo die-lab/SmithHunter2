@@ -74,7 +74,7 @@ variable `three_score` in the filter.
 ## Next steps
 
 1. Run on a full-size real library to tune thresholds, then legacy comparison with v0 output on the same data.
-2. Module B (targets), then HTML report, then optional tools (MINTmap, Kraken2 on unmapped
+2. Module B (targets; design in `docs/module_b_design.md`, open decisions in its section 11), then HTML report, then optional tools (MINTmap, Kraken2 on unmapped
    reads, ShortStack cross-check, AGO-CLIP chimeras).
 
 ## Commands
