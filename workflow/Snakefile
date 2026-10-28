@@ -1,5 +1,5 @@
-"""SmithHunter2: small RNA discovery across user-selected genomes (module A, rule `all`)
-and target prediction (module B, rule `targets`)."""
+"""SmithHunter2: small RNA discovery across user-selected genomes (module A, rule `all`),
+target prediction (module B, rule `targets`) and plots + MultiQC (rule `report`)."""
 
 configfile: "config/config.yaml"
 
@@ -9,6 +9,7 @@ include: "rules/preprocess.smk"
 include: "rules/mapping.smk"
 include: "rules/discovery.smk"
 include: "rules/targets.smk"
+include: "rules/report.smk"
 
 
 rule all:
@@ -18,3 +19,5 @@ rule all:
         OUT / "origin/origin_summary.tsv",
         OUT / "origin/length_distribution.tsv",
         expand(OUT / "qc/{sample}.fastp.json", sample=SAMPLES),
+        OUT / "report/read_funnel.tsv",
+        OUT / "report/provenance.yaml",
