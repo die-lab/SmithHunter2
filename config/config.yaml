@@ -33,6 +33,19 @@ genomes:
 #   split   -> the read is shared among all its best alignments
 ambiguous: report
 
+# Which genome a read is given to when it fits a focus genome and another genome.
+# Mismatches are compared genome by genome (best alignment of the read in each genome).
+#   best   -> (default) fewer mismatches wins; a tie is a double-mapping read, handled by
+#             `ambiguous` above
+#   severe -> as best, but a tie is always discarded (class `ambiguous`, no hits kept)
+#   evil   -> as severe, and a read is also discarded (class `evil_rejected`) when it fits an
+#             exclude genome at most `evil_max_diff` mismatches WORSE than its best focus
+#             alignment (mismatches on the exclude genome minus mismatches on the focus genome,
+#             1..evil_max_diff). Must be <= mapping.mismatches. 0 = same as severe.
+assignment:
+  mode: best
+  evil_max_diff: 1       # only used by evil
+
 trimming:
   adapter_r1: TGGAATTCTCGGGTGCCAAGG          # empty -> fastp autodetection
   adapter_r2: GATCGTCGGACTGTAGAACTCTGAAC     # paired-end only

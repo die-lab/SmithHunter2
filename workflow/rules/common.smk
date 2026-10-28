@@ -12,6 +12,14 @@ MIN_LEN = int(TRIM.get("min_length", 18))
 MAX_LEN = int(TRIM.get("max_length", 35))
 MAPPING = config.get("mapping", {})
 LOCI = config.get("loci", {})
+ASSIGNMENT = config.get("assignment") or {}
+MODE = ASSIGNMENT.get("mode", "best")
+EVIL_MAX_DIFF = int(ASSIGNMENT.get("evil_max_diff", 0))
+if MODE not in ("best", "severe", "evil"):
+    raise ValueError("config: assignment.mode must be best, severe or evil")
+if MODE == "evil" and not 0 <= EVIL_MAX_DIFF <= int(MAPPING.get("mismatches", 1)):
+    raise ValueError("config: assignment.evil_max_diff must be between 0 and mapping.mismatches "
+                     "(bowtie -v), otherwise the worse alignments are never reported")
 ENDS = config.get("ends", {})
 THREADS = int(config.get("threads", 8))
 GENOMES = config["genomes"]

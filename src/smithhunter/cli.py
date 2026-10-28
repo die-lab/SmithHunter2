@@ -53,7 +53,8 @@ def cmd_assign(args):
         aln.write("read_id\tgenome\tcontig\tstart\tend\tstrand\tweight\tmismatches\n")
         org.write("read_id\tclass\tgenomes\n")
         for rid, cls, genomes, placed in assign(args.sam, excess, list(table), contigs, roles,
-                                                args.ambiguous, args.multimap):
+                                                args.ambiguous, args.multimap, args.mode,
+                                                args.evil_max_diff, args.max_hits):
             label = "+".join(genomes)
             org.write(f"{rid}\t{cls}\t{label}\n")
             for genome, hit, weight in placed:
@@ -183,6 +184,14 @@ def main(argv=None):
     s.add_argument("--contigs", required=True)
     s.add_argument("--ambiguous", default="report")
     s.add_argument("--multimap", default="fractional")
+    s.add_argument("--mode", default="best", choices=["best", "severe", "evil"],
+                   help="genome choice for reads fitting a focus and another genome")
+    s.add_argument("--evil-max-diff", type=int, default=0,
+                   help="evil mode: drop reads fitting an exclude genome up to this many "
+                        "mismatches worse than their best focus alignment")
+    s.add_argument("--max-hits", type=int, default=None,
+                   help="reads with more best alignments are too_many_hits (needed when "
+                        "bowtie does not apply -m, i.e. evil mode)")
     s.add_argument("--alignments", required=True)
     s.add_argument("--origin", required=True)
     s.add_argument("--summary", required=True)

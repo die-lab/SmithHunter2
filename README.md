@@ -11,7 +11,8 @@ loci on those genomes while the others compete for the reads.
   happens to fit. A read from the mitochondrion is not lost because a NUMT in the
   nuclear genome resembles it, and nuclear reads do not inflate mitochondrial loci.
 - Reads that fit two genomes equally well are reported as **ambiguous** and handled by
-  a policy you choose.
+  a policy you choose. A stricter genome choice is available (`assignment.mode`: `best`,
+  `severe`, `evil`, see below).
 - Circular genomes are handled natively: loci across the origin are found as one locus.
 - Loci are called from the 5' ends of reads, where small RNAs pile up and degradation
   fragments do not, so small RNAs inside a degraded rRNA or mRNA keep their own locus.
@@ -67,6 +68,20 @@ focus genome and in another genome. The `ambiguous` setting decides what happens
 ambiguous reads: `report` (listed, not used for loci), `discard`, or `split` (shared
 among all best alignments). Within one genome, reads with several equally good
 alignments are shared among them (`multimap: fractional`) or dropped (`unique`).
+
+#### Genome choice: `assignment.mode`
+
+For a read that fits a focus genome and another genome, mismatches are compared genome by
+genome (best alignment of the read in each genome):
+
+| mode | rule |
+|---|---|
+| `best` (default) | the genome with fewer mismatches gets the read; a tie is a double-mapping read (`ambiguous` policy) |
+| `severe` | as `best`, but a tie is always discarded |
+| `evil` | as `severe`, and the read is also discarded (`evil_rejected`) when an exclude genome fits it at most `assignment.evil_max_diff` mismatches worse than the focus genome, even though the focus genome fits better |
+
+`evil_max_diff` must not exceed `mapping.mismatches`; in `evil` mode bowtie also reports the
+worse alignments (no `--strata`/`-m`, up to `max_hits + 1` alignments) so they can be seen.
 
 ### How loci are called
 
@@ -143,6 +158,7 @@ Other settings, with their defaults:
 | setting | default | meaning |
 |---|---|---|
 | `ambiguous` | `report` | `report`, `discard` or `split` (see above) |
+| `assignment.mode` / `evil_max_diff` | `best` / 0 | genome choice: `best`, `severe` or `evil`, and the tolerance of `evil` (see above) |
 | `trimming.adapter_r1` / `adapter_r2` | TruSeq small RNA | 3' adapters; empty for fastp autodetection |
 | `trimming.min_length` / `max_length` | 18 / 35 | read length range kept |
 | `mapping.mismatches` | 1 | bowtie `-v` |
