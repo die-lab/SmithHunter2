@@ -176,6 +176,8 @@ All paths are under `results/` (the `outdir` setting).
 | `origin/length_distribution.tsv` | the same, by read length |
 | `origin/read_origin.tsv.gz` | origin class of every unique read |
 | `qc/*.fastp.html` | trimming reports |
+| `report/read_funnel.tsv` | reads left after each step, per sample |
+| `report/provenance.yaml` | config, software and conda pins, git commit and locus counts of the run |
 
 Main columns of `loci.tsv`:
 
@@ -192,6 +194,26 @@ Main columns of `loci.tsv`:
 | `isolation` | share of the reads starting near the peak that belong to the locus |
 | `annotation_class`, `annotation_orientation` | most specific overlapping GFF3 feature and its strand relation |
 | `expression_pass`, `ends_pass`, `pass` | filter results |
+
+### Plots and QC report
+
+The `report` rule adds plots (R/ggplot2) and a MultiQC report. It needs R and MultiQC,
+so it is not part of the default run; with per-rule conda environments:
+
+```bash
+snakemake -s /path/to/SmithHunter2/workflow/Snakefile --cores 8 --sdm conda report
+```
+
+| file (`results/report/`) | content |
+|---|---|
+| `reads.pdf` | read funnel (all samples and per sample), genome of origin, read length by origin |
+| `genomes.pdf` | coverage of each focus genome contig by strand, passing loci labelled by number |
+| `loci.pdf` | profile of each passing locus: depth, 5' and 3' ends per position |
+| `multiqc_report.html` | fastp and bowtie reports, read funnel and origin per sample |
+| `coverage.tsv.gz` | depth and 5' ends per position of focus genomes (input of `genomes.pdf`) |
+
+The reporting layer (funnel, provenance, ggplot2 plots, MultiQC) follows the one of the
+smithhunter24 Snakemake port of SmithHunter v0 module A.
 
 ## Target prediction (module B, in progress)
 
@@ -284,7 +306,7 @@ they check that the workflow runs, not that the results are meaningful.
 
 1. Module B: IntaRNA and RNAhybrid scores per site with q-values from decoys, precursor
    folding, then the opt-in bacterial mode.
-2. HTML report.
+2. Report: plots of module B results.
 
 ## Citation
 

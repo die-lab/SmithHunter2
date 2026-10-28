@@ -103,6 +103,33 @@ def cmd_evaluate(args):
     print(run(args.truth, args.results, args.out), end="")
 
 
+def cmd_funnel(args):
+    from .report import funnel, write_mqc_funnel, write_mqc_origin
+    samples = [r["sample"] for r in read_tsv(args.libraries)]
+    if len(args.fastp) != len(samples):
+        sys.exit("--fastp needs one fastp JSON per sample, in the order of --libraries")
+    rows = funnel(samples, args.fastp, args.libraries, args.summary, args.loci)
+    write_tsv(args.out, rows, ["stage", "label"] + samples + ["total"])
+    if args.mqc_funnel:
+        write_mqc_funnel(args.mqc_funnel, samples, rows)
+    if args.mqc_origin:
+        write_mqc_origin(args.mqc_origin, samples, args.summary)
+    print(" -> ".join(f"{r['stage']} {r['total']}" for r in rows))
+
+
+def cmd_coverage(args):
+    from .loci import load_counts
+    from .report import coverage, coverage_columns
+    samples, _ = load_counts(args.counts)
+    n = 0
+    with open_text(args.out, "wt") as fh:
+        fh.write("\t".join(coverage_columns(samples)) + "\n")
+        for row in coverage(args.alignments, args.counts, args.genomes, args.contigs):
+            fh.write("\t".join(map(str, row)) + "\n")
+            n += 1
+    print(f"{n} covered positions on focus genomes")
+
+
 def cmd_regions(args):
     from .targets.regions import regions_from_genome, regions_from_transcripts, write_regions
     wanted = args.regions.split(",")
@@ -271,6 +298,24 @@ def main(argv=None):
     s.add_argument("--targets", required=True)
     s.add_argument("--fdr", required=True)
     s.set_defaults(func=cmd_sites)
+
+    s = sub.add_parser("funnel", help="reads left after each step, per sample")
+    s.add_argument("--fastp", nargs="+", required=True, help="fastp JSON reports, one per sample")
+    s.add_argument("--libraries", required=True)
+    s.add_argument("--summary", required=True, help="origin_summary.tsv")
+    s.add_argument("--loci", required=True)
+    s.add_argument("--out", required=True)
+    s.add_argument("--mqc-funnel", default="", help="MultiQC custom content table")
+    s.add_argument("--mqc-origin", default="", help="MultiQC custom content bar graph")
+    s.set_defaults(func=cmd_funnel)
+
+    s = sub.add_parser("coverage", help="depth and 5' ends per position of focus genomes")
+    s.add_argument("--alignments", required=True)
+    s.add_argument("--counts", required=True)
+    s.add_argument("--genomes", required=True)
+    s.add_argument("--contigs", required=True)
+    s.add_argument("--out", required=True)
+    s.set_defaults(func=cmd_coverage)
 
     args = p.parse_args(argv)
     args.func(args)
