@@ -73,7 +73,17 @@ loci:
 ends:
   n_thre: 0.5            # fraction of reads used to find the dominant end positions
   penalty: 0.1
-  min_five_score: 0.5    # pass if five_score > this
+  # How the 5' end is tested (the 3' end always uses the score):
+  #   dominant -> (default) share of the locus reads starting at its top 5' position
+  #               must be >= min_five_fraction
+  #   jitter   -> share of the reads starting within five_jitter nt of the top position
+  #               must be >= min_five_fraction (tolerates 5' ends shifted by 1-2 nt)
+  #   score    -> five_score > min_five_score (with 0.5 the same loci pass as dominant
+  #               with min_five_fraction = n_thre)
+  five_filter: dominant
+  min_five_fraction: 0.5
+  five_jitter: 1
+  min_five_score: 0.5    # score only: pass if five_score > this
   min_three_score: 0.0   # pass if three_score >= this
   min_isolation: 0.5     # and if this share of the reads starting near the peak are its own
 

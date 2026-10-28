@@ -1,9 +1,29 @@
 import pytest
 
 from smithhunter.annotate import Annotation, Feature, describe
-from smithhunter.ends import end_score
+from smithhunter.ends import end_score, jitter_fraction
 from smithhunter.loci import (Locus, Member, build_loci, discover, fold_origin,
                               poisson_significant, split_peaks)
+
+
+def test_jitter_fraction():
+    # mito_00060 of .test: two main 5' ends 2 nt apart
+    profile = {0: 1, 1: 16, 2: 39, 3: 5, 4: 32, 5: 2, 6: 4, 7: 2, 8: 1}
+    assert jitter_fraction(profile, 0) == pytest.approx(39 / 102)
+    assert jitter_fraction(profile, 1) == pytest.approx(60 / 102)
+    assert jitter_fraction(profile, 2) == pytest.approx(93 / 102)
+    # tie for the top position: the leftmost one is the centre
+    assert jitter_fraction({10: 5, 20: 5, 21: 1}, 1) == pytest.approx(5 / 11)
+    assert jitter_fraction({}) == 0.0
+
+
+def test_score_above_half_means_dominant_fraction_reaches_n_thre():
+    # the old rule (score > 0.5) and the new default (dominant >= 0.5) pass the same loci
+    profiles = [{1: 50, 2: 50}, {1: 51, 2: 49}, {1: 49, 2: 30, 5: 21}, {1: 40, 3: 35, 4: 25},
+                {1: 100}, {1: 10, 2: 10, 3: 10, 4: 10, 5: 10}, {1: 2, 9: 1}]
+    for p in profiles:
+        score, dominant = end_score(p, 0.5, 0.1)
+        assert (score > 0.5) == (dominant >= 0.5 - 1e-9), p
 
 
 def test_end_score():
