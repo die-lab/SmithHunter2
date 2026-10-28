@@ -71,6 +71,26 @@ variable `three_score` in the filter.
   reads starting within 10 nt of the peak, >= 0.5). `.test`: 25 passing loci, 9 of the 12 found by
   overlap blocks; the 3 lost have 0-3 reads per sample within +-2 nt of their 5' end.
 
+## Report and v0 comparison (2026-10-28)
+
+- Reporting layer adapted from the colleague's `~/14_SmithHunther2/smithhunter24` (a faithful
+  Snakemake port of v0 module A, not under git): `report.py` + `funnel` / `coverage` subcommands,
+  `workflow/rules/report.smk`, R scripts in `workflow/scripts/`. `read_funnel.tsv` and
+  `provenance.yaml` are in rule `all` (stdlib only); plots and MultiQC are rule `report`
+  (envs `r.yaml`, `multiqc.yaml`; tested on the server by putting the colleague's existing R and
+  MultiQC envs on PATH instead of creating new ones). The "Found 1 samples" line of MultiQC for
+  the origin bar graph counts datasets: the plot has every sample.
+- v0 comparison on `.test` in `~/THE_CAPTAIN/compare_v0_20261024` (a copy of the colleague's
+  pipeline with the adapters set: with `adapter_r1: null` fastp autodetection left the adapter
+  on most reads). Their 30 candidates: 15 match or overlap our 25 passing loci, 15 fail our
+  filters (mostly ends/isolation). 15 of ours are not theirs, e.g. `mito_00356` (812 reads,
+  1 mismatch on mito, 2 on a nuclear contig) removed by their nuclear filter; their sequence
+  clustering splits one locus into several candidates.
+- `five_score` takes few values (1, 0.5, 0.476 = two ends 2 nt apart, 0.333, ...) and the filter is
+  `> min_five_score` (0.5), so it means "one 5' position holds >= n_thre of the reads". Loci with
+  two main 5' ends 1-2 nt apart fail (e.g. mito_00060: 39 reads at +2, 32 at +4). Open question
+  for the maintainer: keep, or tolerate +-1 nt jitter.
+
 ## Where we stopped (2026-10-09)
 
 - Module B step 1 is done and pushed (`834a2b9`, CI green): `regions`, `decoys`, `sites`
@@ -97,7 +117,7 @@ variable `three_score` in the filter.
    the site, `-f` matching the seed, `-d xi,theta` from RNAcalibrate on the same regions); score
    real and decoy sites; q-values with `targets/fdr.py:qvalues`; `support` column. Add stored
    tool outputs as parser test fixtures; extend the simulation check.
-3. Then: precursor folding (step 3), bacterial mode (step 4), report.
+3. Then: precursor folding (step 3), bacterial mode (step 4), plots of module B in the report.
 4. Module A: run on a full-size real library to tune thresholds, then legacy comparison with v0.
    Optional tools later (MINTmap, Kraken2 on unmapped reads, ShortStack cross-check, AGO-CLIP).
 
@@ -107,6 +127,7 @@ variable `three_score` in the filter.
 source ~/miniforge3/etc/profile.d/conda.sh && conda activate smithhunter2
 pytest                                            # unit tests (repo root)
 cd .test && snakemake -s ../workflow/Snakefile --cores 2   # integration test (module A)
+snakemake -s ../workflow/Snakefile --cores 2 --sdm conda report   # plots + MultiQC (from .test)
 # simulation benchmark, modules A and B (outside the repo, e.g. in a scratch dir):
 PYTHONPATH=src python -m smithhunter simulate --outdir /tmp/sim
 cd /tmp/sim && snakemake -s <repo>/workflow/Snakefile --cores 2 && \
