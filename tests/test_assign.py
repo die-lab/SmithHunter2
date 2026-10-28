@@ -69,3 +69,63 @@ def test_overhang_copy_is_folded_and_deduplicated():
                               "report", "fractional")
     assert cls == "assigned"
     assert [(hit.start, w) for _, hit, w in placed] == [(5, 1.0)]
+
+
+def hm(ref, start, mm):
+    return Hit(ref, start, start + 20, "+", mm)
+
+
+def test_best_mode_sends_read_to_genome_with_fewer_mismatches():
+    # focus 0 mm, nuclear 1 mm: focus wins; reversed: nuclear wins and the read is excluded
+    cls, genomes, placed = classify([hm("mt|chrM", 0, 0), hm("nuc|chr1", 5, 1)], CONTIGS, ROLES,
+                                    "report", "fractional")
+    assert cls == "assigned" and genomes == ["mt"] and len(placed) == 1
+    cls, genomes, placed = classify([hm("mt|chrM", 0, 1), hm("nuc|chr1", 5, 0)], CONTIGS, ROLES,
+                                    "report", "fractional")
+    assert (cls, genomes, placed) == ("excluded", ["nuc"], [])
+
+
+def test_severe_mode_discards_ties_even_with_split_policy():
+    hits = [hm("mt|chrM", 0, 0), hm("nuc|chr1", 5, 0)]
+    cls, _, placed = classify(hits, CONTIGS, ROLES, "split", "fractional", mode="severe")
+    assert cls == "ambiguous" and placed == []
+    # a better focus alignment is still kept in severe mode
+    cls, _, placed = classify([hm("mt|chrM", 0, 0), hm("nuc|chr1", 5, 1)], CONTIGS, ROLES,
+                              "split", "fractional", mode="severe")
+    assert cls == "assigned" and len(placed) == 1
+
+
+def test_evil_mode_rejects_reads_that_also_fit_the_exclude_genome_within_tolerance():
+    hits = [hm("mt|chrM", 0, 0), hm("nuc|chr1", 5, 1)]
+    cls, genomes, placed = classify(hits, CONTIGS, ROLES, "report", "fractional",
+                                    mode="evil", evil_max_diff=1)
+    assert (cls, genomes, placed) == ("evil_rejected", ["mt", "nuc"], [])
+    # tolerance 0 behaves as severe: the worse nuclear alignment does not matter
+    cls, _, placed = classify(hits, CONTIGS, ROLES, "report", "fractional",
+                              mode="evil", evil_max_diff=0)
+    assert cls == "assigned" and len(placed) == 1
+    # difference larger than the tolerance: kept
+    cls, _, placed = classify([hm("mt|chrM", 0, 0), hm("nuc|chr1", 5, 2)], CONTIGS, ROLES,
+                              "report", "fractional", mode="evil", evil_max_diff=1)
+    assert cls == "assigned" and len(placed) == 1
+    # tie: discarded as in severe
+    cls, _, placed = classify([hm("mt|chrM", 0, 0), hm("nuc|chr1", 5, 0)], CONTIGS, ROLES,
+                              "split", "fractional", mode="evil", evil_max_diff=1)
+    assert cls == "ambiguous" and placed == []
+    # exclude genome fits better: excluded, as in best mode
+    cls, _, _ = classify([hm("mt|chrM", 0, 1), hm("nuc|chr1", 5, 0)], CONTIGS, ROLES,
+                         "report", "fractional", mode="evil", evil_max_diff=1)
+    assert cls == "excluded"
+
+
+def test_evil_mode_ignores_worse_hits_in_the_focus_genome():
+    # two focus hits at 1 mm and one at 0 mm: only the 0 mm hit is used
+    cls, _, placed = classify([hm("mt|chrM", 0, 0), hm("mt|chrM", 50, 1)], CONTIGS, ROLES,
+                              "report", "fractional", mode="evil", evil_max_diff=1)
+    assert cls == "assigned" and [(x.start, w) for _, x, w in placed] == [(0, 1.0)]
+
+
+def test_max_hits_sets_aside_reads_with_too_many_best_alignments():
+    hits = [hm("mt|chrM", s, 0) for s in (0, 10, 20)]
+    cls, _, placed = classify(hits, CONTIGS, ROLES, "report", "fractional", max_hits=2)
+    assert cls == "too_many_hits" and placed == []

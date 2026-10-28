@@ -87,6 +87,31 @@ variable `three_score` in the filter.
   by GitHub email privacy). `gh` is not installed: CI status via
   `curl https://api.github.com/repos/die-lab/SmithHunter2/actions/runs?per_page=3`.
 
+## Genome-choice modes (added 2026-10-27) - READ BEFORE TOUCHING `assign.py`
+
+`assignment.mode` in the config (`best` | `severe` | `evil`, plus `evil_max_diff`), implemented in
+`classify()` (`assign.py`), `align`/`assign_origin` rules (`mapping.smk`), `common.smk` checks,
+tests in `tests/test_assign.py`. Requested by the maintainer; v0 dropped any read touching the
+nuclear genome even when it fit the focus genome better.
+- `best` (default): fewer mismatches wins, tie = double-mapping read, `ambiguous` policy applies.
+- `severe`: ties between genomes always discarded (class `ambiguous`, nothing placed).
+- `evil`: as severe, and discard (class `evil_rejected`) when
+  0 < (best mismatches on an exclude genome) - (best mismatches on the focus genome) <= `evil_max_diff`.
+  The maintainer phrased the parameter as "focus minus filtering-out"; that difference is negative when
+  the focus fits better, so the config uses its absolute value (how much worse the exclude genome fits).
+  `evil_max_diff` 0 = severe; must be <= `mapping.mismatches` (checked in `common.smk`).
+- Evil needs the worse strata: `align` then runs `bowtie --best -k max_hits+1` (no `--strata`, no `-m`)
+  and `assign --max-hits` sets aside reads with too many best alignments. Caveat: with `-k` truncation, a
+  read with more than max_hits+1 alignments in total may lose exclude hits of a worse stratum (rare).
+  I assumed bowtie reports best-to-worst with `--best`; `classify` does not rely on the order, only on the
+  set of hits it receives.
+- Checked on `.test` copy (best/severe/evil, `evil_max_diff` 1): best = severe there because the policy is
+  `report` (ties are not used either way); evil rejected 251 of 3283 mapped unique reads.
+- To do / ideas: not yet in the simulator (`simulate.py` has no NUMT with mismatches; add one and test
+  `evil` in `evaluate`); `severe`/`evil` also discard ties between two focus genomes (decide if that is wanted);
+  the origin summary has `evil_rejected` as a new class (check downstream code and plots that list classes);
+  `evil` does not look at hit counts per genome, only at the best mismatch count.
+
 ## Next steps
 
 1. Single environment again: pin Python in `environment.yml` (e.g. `>=3.10,<3.14`) and add

@@ -33,6 +33,9 @@ rule bowtie_index:
 # --best --strata -k K -m K: report every equally best alignment, and set aside reads
 # with more than K of them. bowtie writes the alignments of a read together; --reorder is
 # not used because bowtie 1.3.1 deadlocks with it when running on more than one thread.
+# assignment.mode evil needs the worse strata too (a read with 0 mm on the focus genome and 1 mm on
+# the nuclear genome must be seen): --strata and -m are dropped, up to max_hits + 1 alignments are
+# reported best first, and `assign --max-hits` sets aside reads with too many best alignments.
 rule align:
     input:
         reads=OUT / "collapsed/unique.fa",
@@ -43,14 +46,17 @@ rule align:
     params:
         mismatches=MAPPING.get("mismatches", 1),
         max_hits=MAPPING.get("max_hits", 50),
+        report=(f"--best -k {int(MAPPING.get('max_hits', 50)) + 1}" if MODE == "evil" else
+                f"--best --strata -k {MAPPING.get('max_hits', 50)} -m {MAPPING.get('max_hits', 50)} "
+                f"--max {OUT / 'mapping/too_many_hits.fa'}"),
     log:
         OUT / "logs/align.log",
     threads: THREADS
     conda:
         "../envs/bowtie.yaml"
     shell:
-        "bowtie -f -v {params.mismatches} -k {params.max_hits} -m {params.max_hits} "
-        "--best --strata -p {threads} --sam --max {output.excess} "
+        "bowtie -f -v {params.mismatches} {params.report} "
+        "-p {threads} --sam "
         "{input.index}/combined {input.reads} 2> {log} | gzip -c > {output.sam}; "
         "touch {output.excess}"
 
@@ -70,6 +76,9 @@ rule assign_origin:
     params:
         ambiguous=config.get("ambiguous", "report"),
         multimap=LOCI.get("multimap", "fractional"),
+        mode=MODE,
+        evil_max_diff=EVIL_MAX_DIFF,
+        max_hits=MAPPING.get("max_hits", 50),
     log:
         OUT / "logs/assign_origin.log",
     conda:
@@ -77,5 +86,6 @@ rule assign_origin:
     shell:
         "{SH} assign --sam {input.sam} --excess {input.excess} --counts {input.counts} "
         "--genomes {input.genomes} --contigs {input.contigs} --ambiguous {params.ambiguous} "
-        "--multimap {params.multimap} --alignments {output.alignments} --origin {output.origin} "
+        "--multimap {params.multimap} --mode {params.mode} --evil-max-diff {params.evil_max_diff} "
+        "--max-hits {params.max_hits} --alignments {output.alignments} --origin {output.origin} "
         "--summary {output.summary} --lengths {output.lengths} > {log} 2>&1"

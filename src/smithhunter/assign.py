@@ -14,6 +14,19 @@ Ambiguous reads follow the ``ambiguous`` policy: ``discard`` drops them, ``repor
 keeps them out of loci but lists them, ``split`` shares the read among all its hits.
 Within one genome, multi-mapping reads are shared among their hits (``fractional``)
 or dropped (``unique``).
+
+Genome choice (``mode``) decides how a read that fits a focus genome and another genome is
+treated. Mismatches are compared per genome (the best alignment of the read in that genome):
+
+- ``best``    (default) the read goes to the genome with fewer mismatches; ties between
+              genomes are double-mapping reads, handled by the ``ambiguous`` policy.
+- ``severe``  as ``best``, but ties between genomes are always discarded.
+- ``evil``    as ``severe``, and a read is also discarded when it fits an exclude genome
+              at most ``evil_max_diff`` mismatches worse than its best focus alignment
+              (class ``evil_rejected``). The exclude genome is the filtering-out genome:
+              with ``evil_max_diff = 1`` a read with 0 mismatches on the focus genome and
+              1 on the nuclear genome is dropped; with 0 evil is the same as severe.
+              bowtie must report the non-best strata (see ``align`` in mapping.smk).
 """
 
 from __future__ import annotations
@@ -27,8 +40,10 @@ from typing import Iterable, Iterator
 from .seqio import open_text
 
 POLICIES = ("discard", "report", "split")
+MODES = ("best", "severe", "evil")
 MULTIMAP = ("fractional", "unique")
-CLASSES = ("assigned", "excluded", "ambiguous", "too_many_hits", "unmapped", "multimap_dropped")
+CLASSES = ("assigned", "excluded", "ambiguous", "too_many_hits", "unmapped", "multimap_dropped",
+           "evil_rejected")
 
 _CIGAR = re.compile(r"(\d+)([MIDNSHP=X])")
 
@@ -98,15 +113,35 @@ def group_hits(sam_lines: Iterable[str]) -> Iterator[tuple[str, list[Hit]]]:
 
 
 def classify(hits: list[Hit], contigs: dict[str, Contig], roles: dict[str, str],
-             policy: str, multimap: str):
-    """Return (class, genomes, [(genome, hit, weight)]) for one read."""
+             policy: str, multimap: str, mode: str = "best", evil_max_diff: int = 0,
+             max_hits: int | None = None):
+    """Return (class, genomes, [(genome, hit, weight)]) for one read.
+
+    ``hits`` may span several mismatch strata (mode ``evil`` needs them); only the best
+    stratum over all genomes is used to choose the origin.
+    """
     unique_hits = sorted({fold_circular(h, contigs[h.ref]) for h in hits},
                          key=lambda h: (h.ref, h.start, h.strand))
-    by_genome: dict[str, list[Hit]] = defaultdict(list)
+    all_by_genome: dict[str, list[Hit]] = defaultdict(list)
     for h in unique_hits:
-        by_genome[contigs[h.ref].genome].append(h)
+        all_by_genome[contigs[h.ref].genome].append(h)
+    best = {g: min(h.mismatches for h in hs) for g, hs in all_by_genome.items()}
+    top = min(best.values())
+    by_genome = {g: [h for h in hs if h.mismatches == top]
+                 for g, hs in all_by_genome.items() if best[g] == top}
     genomes = sorted(by_genome)
     focus = [g for g in genomes if roles[g] == "focus"]
+    if max_hits is not None and sum(len(v) for v in by_genome.values()) > max_hits:
+        return "too_many_hits", genomes, []
+
+    if mode == "evil":
+        focus_best = [m for g, m in best.items() if roles[g] == "focus"]
+        exclude_best = [m for g, m in best.items() if roles[g] != "focus"]
+        if focus_best and exclude_best:
+            # mismatches on the filtering-out genome minus mismatches on the focus genome
+            worse_by = min(exclude_best) - min(focus_best)
+            if 0 < worse_by <= evil_max_diff:
+                return "evil_rejected", sorted(best), []
 
     if not focus:
         return "excluded", genomes, []
@@ -115,26 +150,34 @@ def classify(hits: list[Hit], contigs: dict[str, Contig], roles: dict[str, str],
         if multimap == "unique" and len(own) > 1:
             return "multimap_dropped", genomes, []
         return "assigned", genomes, [(focus[0], h, 1.0 / len(own)) for h in own]
-    # ambiguous between genomes
+    # tie between genomes: double-mapping reads
+    if mode in ("severe", "evil"):
+        return "ambiguous", genomes, []
     if policy == "split":
-        weight = 1.0 / len(unique_hits)
+        weight = 1.0 / sum(len(v) for v in by_genome.values())
         placed = [(g, h, weight) for g in focus for h in by_genome[g]]
         return "ambiguous", genomes, placed
     return "ambiguous", genomes, []
 
 
 def assign(sam_path: str, excess_ids: set[str], all_ids: list[str], contigs: dict[str, Contig],
-           roles: dict[str, str], policy: str, multimap: str):
+           roles: dict[str, str], policy: str, multimap: str, mode: str = "best",
+           evil_max_diff: int = 0, max_hits: int | None = None):
     """Yield (read_id, class, genomes, placed hits) for every unique read."""
     if policy not in POLICIES:
         raise ValueError(f"ambiguous policy must be one of {POLICIES}")
     if multimap not in MULTIMAP:
         raise ValueError(f"multimap must be one of {MULTIMAP}")
+    if mode not in MODES:
+        raise ValueError(f"assignment mode must be one of {MODES}")
+    if evil_max_diff < 0:
+        raise ValueError("evil_max_diff must be >= 0")
     mapped = set()
     with open_text(sam_path) as fh:
         for read_id, hits in group_hits(fh):
             mapped.add(read_id)
-            cls, genomes, placed = classify(hits, contigs, roles, policy, multimap)
+            cls, genomes, placed = classify(hits, contigs, roles, policy, multimap, mode,
+                                              evil_max_diff, max_hits)
             yield read_id, cls, genomes, placed
     for read_id in all_ids:
         if read_id not in mapped:
