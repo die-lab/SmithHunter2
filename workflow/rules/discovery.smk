@@ -31,6 +31,9 @@ rule discover:
         min_five=ENDS.get("min_five_score", 0.5),
         min_three=ENDS.get("min_three_score", 0.0),
         min_isolation=ENDS.get("min_isolation", 0.5),
+        five_filter=ENDS.get("five_filter", "dominant"),
+        min_five_fraction=ENDS.get("min_five_fraction", 0.5),
+        five_jitter=ENDS.get("five_jitter", 1),
     log:
         OUT / "logs/discover.log",
     conda:
@@ -45,5 +48,7 @@ rule discover:
         "--satellite-fraction {params.satellite_fraction} "
         "--n-thre {params.n_thre} --penalty {params.penalty} --min-five {params.min_five} "
         "--min-three {params.min_three} --min-isolation {params.min_isolation} "
+        "--five-filter {params.five_filter} --min-five-fraction {params.min_five_fraction} "
+        "--five-jitter {params.five_jitter} "
         "--loci {output.loci} --reads {output.reads} "
         "--fasta {output.fasta} > {log} 2>&1"

@@ -88,8 +88,13 @@ variable `three_score` in the filter.
   clustering splits one locus into several candidates.
 - `five_score` takes few values (1, 0.5, 0.476 = two ends 2 nt apart, 0.333, ...) and the filter is
   `> min_five_score` (0.5), so it means "one 5' position holds >= n_thre of the reads". Loci with
-  two main 5' ends 1-2 nt apart fail (e.g. mito_00060: 39 reads at +2, 32 at +4). Open question
-  for the maintainer: keep, or tolerate +-1 nt jitter.
+  two main 5' ends 1-2 nt apart fail (e.g. mito_00060: 39 reads at +2, 32 at +4).
+  Decided by the maintainer: a user flag, as for `assignment.mode`. `ends.five_filter`:
+  `dominant` (default; share of reads at the top 5' position >= `min_five_fraction`, 0.5),
+  `jitter` (share within `five_jitter` nt, default 1, of the top position), `score` (the old
+  `five_score > min_five_score`). `dominant` at 0.5 passes exactly the loci the old rule passed
+  (test `test_score_above_half_means_dominant_fraction_reaches_n_thre`), so defaults keep results;
+  new column `five_jitter_fraction`. The 3' end still uses `three_score`.
 
 ## Where we stopped (2026-10-09)
 

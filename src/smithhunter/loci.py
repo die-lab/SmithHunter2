@@ -32,7 +32,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from .annotate import Annotation, describe
-from .ends import end_score
+from .ends import FIVE_FILTERS, end_score, jitter_fraction
 from .seqio import open_text, read_tsv
 
 
@@ -197,7 +197,9 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
              merge_gap=0, min_rpm=5.0, min_count=1, min_samples=None, n_thre=0.5, penalty=0.1,
              min_five=0.5, min_three=0.0, peaks=True, peak_window=2, peak_pvalue=0.001,
              background_flank=50, satellite_distance=10, satellite_fraction=0.1,
-             min_isolation=0.5):
+             min_isolation=0.5, five_filter="dominant", min_five_fraction=0.5, five_jitter=1):
+    if five_filter not in FIVE_FILTERS:
+        raise ValueError(f"five_filter must be one of {FIVE_FILTERS}")
     samples, counts = load_counts(counts_path)
     library = {r["sample"]: float(r["reads_kept"]) for r in read_tsv(libraries_path)}
     genomes = {g["name"]: g for g in read_tsv(genomes_path)}
@@ -267,6 +269,7 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
         rpm_genome = [c / t * 1e6 if t else 0.0 for c, t in zip(per_sample, totals)]
         five_score, five_dom = end_score(five, n_thre, penalty)
         three_score, three_dom = end_score(three, n_thre, penalty)
+        five_jit = jitter_fraction(five, five_jitter)
         # A sample counts when the locus is expressed above the local background in it.
         background = locus.background or [0.0] * len(samples)
         n_pass = 0
@@ -288,8 +291,13 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
                           "annotation_orientation": ""}
 
         expr_pass = n_pass >= min_samples
-        ends_pass = (five_score > min_five and three_score >= min_three
-                     and locus.isolation >= min_isolation)
+        if five_filter == "dominant":
+            five_pass = five_dom >= min_five_fraction - 1e-9
+        elif five_filter == "jitter":
+            five_pass = five_jit >= min_five_fraction - 1e-9
+        else:
+            five_pass = five_score > min_five
+        ends_pass = five_pass and three_score >= min_three and locus.isolation >= min_isolation
         candidate = locus.kind == "peak"
         row = {
             "locus_id": locus_id, "genome": locus.genome, "contig": locus.contig,
@@ -302,6 +310,7 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
             "background_count": round(sum(background), 3),
             "samples_passing_rpm": n_pass,
             "five_score": round(five_score, 4), "five_dominant_fraction": round(five_dom, 4),
+            "five_jitter_fraction": round(five_jit, 4),
             "three_score": round(three_score, 4), "three_dominant_fraction": round(three_dom, 4),
             "isolation": round(locus.isolation, 4),
             **annotation,
@@ -320,7 +329,7 @@ LOCUS_COLUMNS = [
     "locus_id", "genome", "contig", "start", "end", "strand", "span", "wraps_origin",
     "locus_type", "rep_id", "rep_sequence", "rep_length", "rep_start", "rep_end", "unique_reads",
     "total_count", "background_count", "samples_passing_rpm", "five_score", "five_dominant_fraction",
-    "three_score", "three_dominant_fraction", "isolation", "annotation_class", "annotation_types",
+    "five_jitter_fraction", "three_score", "three_dominant_fraction", "isolation", "annotation_class", "annotation_types",
     "annotation_names", "annotation_orientation", "expression_pass", "ends_pass", "pass",
 ]
 READ_COLUMNS = ["locus_id", "read_id", "sequence", "start", "end", "weight", "count"]

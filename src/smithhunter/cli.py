@@ -83,7 +83,9 @@ def cmd_discover(args):
         n_thre=args.n_thre, penalty=args.penalty, min_five=args.min_five, min_three=args.min_three,
         peaks=not args.no_peaks, peak_window=args.peak_window, peak_pvalue=args.peak_pvalue,
         background_flank=args.background_flank, satellite_distance=args.satellite_distance,
-        satellite_fraction=args.satellite_fraction, min_isolation=args.min_isolation)
+        satellite_fraction=args.satellite_fraction, min_isolation=args.min_isolation,
+        five_filter=args.five_filter, min_five_fraction=args.min_five_fraction,
+        five_jitter=args.five_jitter)
     write_tsv(args.loci, rows, locus_columns(samples))
     write_tsv(args.reads, reads, READ_COLUMNS)
     write_fasta(args.fasta, rows)
@@ -244,7 +246,13 @@ def main(argv=None):
     s.add_argument("--satellite-fraction", type=float, default=0.1)
     s.add_argument("--n-thre", type=float, default=0.5)
     s.add_argument("--penalty", type=float, default=0.1)
-    s.add_argument("--min-five", type=float, default=0.5)
+    s.add_argument("--min-five", type=float, default=0.5, help="five-filter score: score > this")
+    s.add_argument("--five-filter", default="dominant", choices=["dominant", "jitter", "score"],
+                   help="5' end test: share of reads at the top position (dominant), within "
+                        "--five-jitter nt of it (jitter), or the end score (score)")
+    s.add_argument("--min-five-fraction", type=float, default=0.5,
+                   help="dominant / jitter: minimum share of the reads")
+    s.add_argument("--five-jitter", type=int, default=1)
     s.add_argument("--min-three", type=float, default=0.0)
     s.add_argument("--min-isolation", type=float, default=0.5)
     s.add_argument("--loci", required=True)

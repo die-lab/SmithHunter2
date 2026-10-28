@@ -172,12 +172,27 @@ Other settings, with their defaults:
 | `loci.multimap` | `fractional` | `fractional` or `unique` within one genome |
 | `loci.min_rpm` / `min_count` | 5 / 5 | per-sample thresholds (reads per million and raw reads) |
 | `loci.min_samples` | n − 1 | samples that must reach both thresholds |
-| `ends.min_five_score` | 0.5 | a locus passes if its 5' score is above this |
+| `ends.five_filter` | `dominant` | how the 5' end is tested: `dominant`, `jitter` or `score` (below) |
+| `ends.min_five_fraction` | 0.5 | `dominant` / `jitter`: a locus passes if this share of its reads starts at (near) the top 5' position |
+| `ends.five_jitter` | 1 | `jitter`: bases on each side of the top 5' position that still count |
+| `ends.min_five_score` | 0.5 | `score`: a locus passes if its 5' score is above this |
 | `ends.min_three_score` | 0.0 | and its 3' score is at least this |
 | `ends.min_isolation` | 0.5 | and its isolation is at least this |
 
 The end score of a locus is 1 when one position holds at least half of the reads
-(`n_thre`), 0.5 for two adjacent positions, and lower for scattered ends.
+(`n_thre`), 0.5 for two adjacent positions, and lower for scattered ends. It only takes
+a few values (1, 0.5, 0.476 for two ends 2 nt apart, 0.333, ...), so the 5' test uses the
+read shares directly by default:
+
+| `five_filter` | the 5' end passes when |
+|---|---|
+| `dominant` (default) | reads starting at the top 5' position / reads of the locus ≥ `min_five_fraction` |
+| `jitter` | reads starting within `five_jitter` nt of the top position / reads of the locus ≥ `min_five_fraction` |
+| `score` | `five_score` > `min_five_score` (the earlier rule; with the defaults it passes the same loci as `dominant`) |
+
+Example (a real locus, 102 reads, 5' ends at +1: 16, +2: 39, +3: 5, +4: 32, 10 elsewhere):
+the dominant fraction is 39/102 = 0.38 and fails at 0.5; with `jitter` the share within
+1 nt of +2 is (16 + 39 + 5)/102 = 0.59 and passes; within 2 nt it would be 0.91.
 
 ## Outputs
 
@@ -206,7 +221,7 @@ Main columns of `loci.tsv`:
 | `background_count` | reads expected from the local background in the peak window |
 | `rpm_<sample>` | reads per million of the trimmed library |
 | `rpm_genome_<sample>` | reads per million of the reads assigned to that genome |
-| `five_score`, `three_score` | end precision (see above); `*_dominant_fraction` = share of the top position |
+| `five_score`, `three_score` | end precision (see above); `*_dominant_fraction` = share of the top position; `five_jitter_fraction` = share within `five_jitter` nt of it |
 | `isolation` | share of the reads starting near the peak that belong to the locus |
 | `annotation_class`, `annotation_orientation` | most specific overlapping GFF3 feature and its strand relation |
 | `expression_pass`, `ends_pass`, `pass` | filter results |
