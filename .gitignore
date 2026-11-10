@@ -7,3 +7,6 @@ __pycache__/
 .pytest_cache/
 sim/
 sim_*/
+
+# local scratch (agents, dev copies, simulations)
+.scratch_solve/

@@ -294,7 +294,13 @@ so module A can be run alone and reviewed first.
 
 ## 10. Implementation order
 
-Progress: step 1 is implemented (`regions`, `decoys`, `sites` subcommands, rule
+Progress: step 2 is implemented (2026-11-09): `score-sites` (`targets/intarna.py`,
+`rnahybrid.py`, `score.py`) and `validate-targets` (`targets/validate.py`). Deviations from
+section 4.2: IntaRNA runs on a window of site +-150 nt instead of the whole region (its
+accessibility window is 150 nt, so the result is the same and the cost is bounded);
+RNAcalibrate is run for the real small RNAs only (decoys use the preset, their p-values are
+not used: q-values rank by MFE and energy); miRanda and `support` weighting are not done.
+Step 1 is implemented (`regions`, `decoys`, `sites` subcommands, rule
 `targets`). On the simulation all 15 planted sites are found with their class. As
 expected, the site-count FDR is close to 1: a seed match is about as frequent for a real
 small RNA as for its decoys. Counting sites shows how much of the signal is background

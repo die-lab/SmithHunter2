@@ -10,7 +10,8 @@ Genomes
   identical and one differing by a single base inside a smallRNA), a repeat with more
   copies than ``max_hits``, piRNA-like clusters, nuclear smallRNAs, and 50 two-exon genes
   (GFF3) whose 3'UTRs carry planted seed sites of mitochondrial smallRNAs (8mer for
-  srna_001-010, 7mer-m8 for srna_011-015; ``truth/targets.tsv``), to test module B.
+  srna_001-010, the first five with extended pairing to guide 9-21; 7mer-m8 for srna_011-015;
+  ``truth/targets.tsv``), to test module B.
 - ``bacterium`` (exclude): a contaminant with a multi-copy rRNA operon.
 
 Library content, with defaults taken from the small RNA-seq literature
@@ -404,12 +405,18 @@ class Simulator:
         self.planted = []
         for k, (guide, gene) in enumerate(zip(guides, genes)):
             cls = "8mer" if k < 10 else "7mer-m8"
-            site = revcomp(guide.sequence[1:8]) + ("A" if cls == "8mer" else "C")
+            # srna_001-005 also pair with guide 9-21 (extended complementarity, a strong
+            # target); srna_006-010 are bare 8mers, srna_011-015 bare 7mer-m8
+            extension = 0
+            if k < 5 and len(guide.sequence) >= 21:
+                extension = 13
+            site = (revcomp(guide.sequence[8:21]) if extension else "") + \
+                revcomp(guide.sequence[1:8]) + ("A" if cls == "8mer" else "C")
             a, b = gene["utr3"]
             pos = rng.randint(a + 20, b - 20 - len(site))
             seq[pos:pos + len(site)] = list(site if gene["strand"] == "+" else revcomp(site))
             self.planted.append({"feature_id": guide.id, "transcript": f"{gene['id']}.t1",
-                                 "gene": gene["id"], "site_class": cls,
+                                 "gene": gene["id"], "site_class": cls, "extension": extension,
                                  "genomic_start": pos + 1, "genomic_end": pos + len(site)})
         self.genes = genes
         return genes
@@ -576,7 +583,7 @@ class Simulator:
         write_tsv(str(out / "truth" / "features.tsv"), rows, columns)
 
         write_tsv(str(out / "truth" / "targets.tsv"), self.planted,
-                  ["feature_id", "transcript", "gene", "site_class", "genomic_start",
+                  ["feature_id", "transcript", "gene", "site_class", "extension", "genomic_start",
                    "genomic_end"])
 
         groups: dict[str, list[int]] = {}

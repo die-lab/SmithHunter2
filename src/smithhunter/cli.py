@@ -160,7 +160,8 @@ def cmd_decoys(args):
     from .targets.pipeline import read_candidates
     from .targets.shuffle import make_decoys
     candidates = [(cid, seq) for cid, _, seq in read_candidates(args.candidates)]
-    decoys = make_decoys(candidates, args.n, parse_seed(args.seed), args.random_seed)
+    decoys = make_decoys(candidates, args.n, parse_seed(args.seed), args.random_seed,
+                         keep_seed=args.keep_seed, mode=args.decoy_mode)
     with open_text(args.out, "wt") as fh:
         for did, _, seq in decoys:
             fh.write(f">{did}\n{seq}\n")
@@ -180,6 +181,62 @@ def cmd_sites(args):
     result = run_sites(candidates, decoys, regions, parse_seed(args.seed), classes)
     write_outputs(*result, args.sites, args.targets, args.fdr)
     print(f"{len(candidates)} candidates, {len(result[1])} sites, {len(result[2])} targets")
+
+
+def cmd_score_sites(args):
+    from .targets.pipeline import read_candidates, read_decoys
+    from .targets.regions import read_regions
+    from .targets.score import ScoreConfig, run_scoring, write_scores
+    temperature = args.temperature
+    if temperature is None:
+        temperature = 37.0
+        print("WARNING: --temperature not set, using 37 C. Set the temperature of the system you "
+              "study (e.g. 25-28 C for many invertebrates and insect cells).", file=sys.stderr)
+    genomes = set(filter(None, args.genomes.split(","))) if args.genomes else set()
+    candidates = [(cid, seq) for cid, genome, seq in read_candidates(args.candidates)
+                  if not genomes or not genome or genome in genomes]
+    ids = {cid for cid, _ in candidates}
+    decoys = [d for d in read_decoys(args.decoys) if d[1] in ids] if args.decoys else []
+    classes = args.classes.split(",") if args.classes else None
+    cfg = ScoreConfig(
+        predictors=tuple(p for p in args.predictors.split(",") if p),
+        score_weak_sites=args.score_weak_sites, temperature=temperature,
+        intarna_flank=args.intarna_flank, rnahybrid_flank=args.rnahybrid_flank,
+        intarna_prefilter=args.intarna_prefilter, timeout=args.timeout,
+        rnahybrid_require_site=not args.rnahybrid_any_duplex, resume=not args.no_resume,
+        calibrate_samples=args.calibrate_samples, workers=args.workers, fdr=args.fdr)
+    unknown = set(cfg.predictors) - {"intarna", "rnahybrid"}
+    if unknown:
+        sys.exit(f"unknown predictor(s): {', '.join(sorted(unknown))}")
+    result = run_scoring(candidates, decoys, read_regions(args.regions), parse_seed(args.seed),
+                         classes, cfg, args.workdir, args.dry_run)
+    if result is None:
+        return
+    _, site_rows, target_rows, curves = result
+    write_scores(site_rows, target_rows, curves, args.sites, args.targets, args.curves)
+    print(f"{len(site_rows)} scored sites, {len(target_rows)} targets, "
+          f"{sum(1 for r in site_rows if r['support'] > 0)} sites with support >= 1")
+
+
+def cmd_validate_targets(args):
+    from collections import defaultdict as dd
+    from .targets.regions import read_regions
+    from .targets.validate import ROW_COLUMNS, validate
+    targets = read_tsv(args.targets)
+    truth = read_tsv(args.truth)
+    universe = None
+    if args.regions:
+        genes = {r.gene for r in read_regions(args.regions)}
+        universe = dd(set)
+        for t in truth:
+            universe[t["candidate"]] = genes
+    rows, summary = validate(targets, truth, universe)
+    write_tsv(args.out, rows, ROW_COLUMNS)
+    print(f"{summary['found']}/{summary['pairs']} validated pairs have a scored site; "
+          f"AUC by predictor: {summary['auc']}")
+    for name, d in summary["detail"].items():
+        print(f"  {name}: median percentile {d['median_pct']}, "
+              f"in the top 5%: {d['top5']:.1%}, top 10%: {d['top10']:.1%}")
 
 
 def main(argv=None):
@@ -301,6 +358,12 @@ def main(argv=None):
     s.add_argument("--n", type=int, default=20)
     s.add_argument("--seed", default="2-8")
     s.add_argument("--random-seed", type=int, default=1)
+    s.add_argument("--decoy-mode", choices=["shuffle", "keep_seed", "match_seed_gc"],
+                   default="shuffle",
+                   help="shuffle: whole sequence; match_seed_gc: whole sequence, seed with the "
+                        "real seed's G+C count; keep_seed: only 3' of the seed")
+    s.add_argument("--keep-seed", action="store_true",
+                   help="shuffle only the part 3' of the seed (decoys share the real seed sites)")
     s.add_argument("--out", required=True)
     s.set_defaults(func=cmd_decoys)
 
@@ -315,6 +378,50 @@ def main(argv=None):
     s.add_argument("--targets", required=True)
     s.add_argument("--fdr", required=True)
     s.set_defaults(func=cmd_sites)
+
+    s = sub.add_parser("score-sites",
+                       help="score seed sites with IntaRNA and RNAhybrid, q-values from decoys")
+    s.add_argument("--candidates", required=True)
+    s.add_argument("--decoys", required=True)
+    s.add_argument("--regions", required=True)
+    s.add_argument("--genomes", default="", help="only candidates of these genomes")
+    s.add_argument("--seed", default="2-8")
+    s.add_argument("--classes", default="")
+    s.add_argument("--predictors", default="intarna,rnahybrid")
+    s.add_argument("--score-weak-sites", action="store_true",
+                   help="also score 6mer and offset-6mer sites (many more runs)")
+    s.add_argument("--temperature", type=float, default=None,
+                   help="deg C of the interaction (IntaRNA); set it for the organism: 37 is "
+                        "wrong for most invertebrates and bacteria outside the host")
+    s.add_argument("--intarna-flank", type=int, default=100)
+    s.add_argument("--intarna-prefilter", type=float, default=1.0,
+                   help="<1: IntaRNA only on this best share of sites by RNAhybrid MFE "
+                        "(per class, same rule for real and decoy sites)")
+    s.add_argument("--rnahybrid-flank", type=int, default=15)
+    s.add_argument("--timeout", type=float, default=300,
+                   help="seconds per IntaRNA / RNAhybrid call; a hang counts as a failed site")
+    s.add_argument("--no-resume", action="store_true",
+                   help="ignore checkpoints in the work directory and score everything again")
+    s.add_argument("--rnahybrid-any-duplex", action="store_true",
+                   help="keep RNAhybrid duplexes that do not cover the seed of the site")
+    s.add_argument("--calibrate-samples", type=int, default=1000,
+                   help="RNAcalibrate sample size per small RNA; 0 uses the 3utr_human preset")
+    s.add_argument("--fdr", type=float, default=0.05)
+    s.add_argument("--workers", type=int, default=1)
+    s.add_argument("--workdir", default=".", help="scratch directory (must not be /tmp)")
+    s.add_argument("--dry-run", action="store_true", help="only count the sites to score")
+    s.add_argument("--sites", help="scored sites table")
+    s.add_argument("--targets", help="scored targets table")
+    s.add_argument("--curves", help="FDR curves table")
+    s.set_defaults(func=cmd_score_sites)
+
+    s = sub.add_parser("validate-targets",
+                       help="rank of validated small RNA -> gene pairs among scored targets")
+    s.add_argument("--targets", required=True, help="targets_scored.tsv")
+    s.add_argument("--truth", required=True, help="TSV with columns candidate, gene[, note]")
+    s.add_argument("--regions", default="", help="regions.tsv: all its genes count as ranked")
+    s.add_argument("--out", required=True)
+    s.set_defaults(func=cmd_validate_targets)
 
     s = sub.add_parser("funnel", help="reads left after each step, per sample")
     s.add_argument("--fastp", nargs="+", required=True, help="fastp JSON reports, one per sample")

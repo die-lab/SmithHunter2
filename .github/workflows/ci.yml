@@ -68,6 +68,10 @@ jobs:
           python -m smithhunter evaluate | tee summary.txt
           grep -q "outcome as expected: .* (100%)" summary.txt
           grep -q "Planted target sites found with their class (or better): 15/15" summary.txt
+          # module B step 2: planted sites with extended pairing are supported by q-values,
+          # unplanted sites are not (false support stays under 5%)
+          grep -qE "extended pairing: support >= 1 in ([0-9]+)/\1," summary.txt
+          grep -qE "other sites with support >= 1: [0-9]+/[0-9]+ \(([0-4]\.[0-9]|0)%?[0-9]*%?\)" summary.txt
       - name: Library with degradation (informative, does not fail)
         run: |
           export PYTHONPATH=$PWD/src

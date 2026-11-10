@@ -105,3 +105,10 @@ targets:
   candidates: results/discovery/candidates.fasta   # edit a copy to review candidates
   seed: [2, 8]                                     # guide positions; v0 used [4, 10]
   decoys: 20                                       # dinucleotide-shuffled decoys each
+  decoy_mode: shuffle                              # or match_seed_gc / keep_seed (see README)
+  predictors: [intarna, rnahybrid]                 # [] = seed sites only (no energy scoring)
+  score_weak_sites: false                          # also score 6mer / offset-6mer (many more runs)
+  temperature: 37                                  # deg C for IntaRNA: SET IT for your organism (not set = 37 with a warning)
+  calibrate_samples: 1000                          # RNAcalibrate sample size per small RNA (0: preset)
+  intarna_prefilter: 1.0                           # <1: IntaRNA only on this best share of sites by RNAhybrid MFE
+  fdr: 0.05                                        # q-value threshold for "support"

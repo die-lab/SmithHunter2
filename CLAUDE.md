@@ -137,16 +137,61 @@ nuclear genome even when it fit the focus genome better.
   the origin summary has `evil_rejected` as a new class (check downstream code and plots that list classes);
   `evil` does not look at hit counts per genome, only at the best mismatch count.
 
+## Module B step 2 (2026-11-09)
+
+- Done: `targets/intarna.py`, `rnahybrid.py`, `score.py`, `validate.py`; subcommands `score-sites`
+  (with `--dry-run`) and `validate-targets`; rule `score_sites` (in `targets`; `predictors: []` skips it);
+  tests `tests/test_score.py` (parsers on captured real output, geometry, q-values with the tools
+  faked, real-tool tests skipped when the tools are not on PATH) and `tests/test_validate.py`.
+- Single environment is back: dry solve of `environment.yml` (python>=3.10,<3.14 + intarna,
+  rnahybrid, viennarna) gives python 3.13, IntaRNA 3.4.1, RNAhybrid 2.1.2, ViennaRNA 2.7.2.
+  NOT yet created for real (it would install under ~/miniforge3, outside THE_CAPTAIN); `smithhunter2-rna`
+  still works and can be dropped after creating it.
+- Tool facts checked on the server: IntaRNA ranges are `from-to`; `--tRegion` must contain the
+  whole interaction (guide reach), so the seed is pinned with `--seedTRange`; IntaRNA output has
+  `id1` = target, `id2` = query. RNAhybrid `-f` counts from the 5' end of the guide; it returns
+  `mfe 0.0 p 1.0` when the helix constraint cannot be met (treated as no interaction). RNAcalibrate
+  prints `name n xi theta`; xi ~1.5-1.7, theta ~0.2, stable from k=1000.
+- Simulation check (CI asserts it): planted 8mers srna_001-005 with extended pairing to guide 9-21
+  (4 of them long enough) are supported (q <= 0.05 in both predictors) 4/4; bare seed sites 0/11;
+  other sites 0/170 (1.1% in another seed). `evaluate` prints this ("Scored sites" block).
+- Code review by a subagent (2026-11-10) found, and these are fixed with tests in
+  `tests/test_review_fixes.py`: candidates without decoys got q = 0 (now no q; pooled decoys
+  weighted 1/n of their candidate; no decoys at all raises); `t1` of non-canonical seeds
+  (`sites.py`) was off by one, so IntaRNA silently scored nothing for `--seed 4-10`;
+  `validate` gave AUC 1 for one-gene universes; no tool timeouts; a stage-2 error wiped a
+  site's RNAhybrid score; `best_site_class`. Two design points it raised: the full-shuffle
+  decoy null differs from the real sequence in seed composition (added `decoy_mode:
+  keep_seed`), and the RNAhybrid duplex may sit on another seed match of the window (added
+  `rnahybrid_require_site`; my first `at_site` flag compared the duplex start with a fully paired
+  guide and was wrong for seed-only sites).
+- Literature check by two subagents (2026-11-10), points acted on: p-value calibration: window-length calibration (~55 nt)
+  was tried and fails (RNAcalibrate gives xi < 0 below ~100 nt), so it uses RNAcalibrate's default 500+-300 nt
+  (`CALIBRATION_LENGTH`); the region-length version was replaced; `fdr_pseudocount` (+1) in q-values;
+  decoy modes `shuffle` / `match_seed_gc` / `keep_seed` (`--decoy-mode`); README section
+  "Statistical notes and limits". NOT done: seed-composition-matched decoys beyond GC count,
+  measuring the sensitivity to the IntaRNA flank, recall of two-stage mode on real data. Citations
+  that could not be verified were left out (Fu & Qian 2014, Min & Yoon 2010, Cheng/Yu; PITA flank sizes).
+- Checkpoints (`score.py`): `checkpoint_stage1.pkl` / `checkpoint_scores.pkl` in `--workdir`, keyed by
+  a signature of guides + decoys + target sequences + settings. Tests run `run_scoring` in a tmp cwd
+  (autouse fixture) so checkpoints never leak between tests. Developing while a long job runs: copy
+  `src` and `tests` to `.scratch_solve/dev` and give it its own `pytest.ini` (the repo's
+  `pyproject.toml` otherwise puts the repo `src` first on the path); deploy after the tests pass.
+- Costs measured on the shared server: IntaRNA 0.14 s/site (flank 150), 0.05 s (flank 60);
+  RNAhybrid 0.009 s/site. Hence `intarna_flank` default 100 and the two-stage `intarna_prefilter`.
+- Calibration data for bacterial -> host small RNAs: `~/THE_CAPTAIN/calib_bacterial_rnai`, with
+  `README.md` there (what was chosen and why, accessions, download state).
+- Rule for this server: never write outside THE_CAPTAIN, also not to /tmp (pytest: use
+  `--basetemp` inside THE_CAPTAIN; conda: `CONDA_PKGS_DIRS` inside THE_CAPTAIN; `pkill -f` can
+  kill your own ssh shell: kill by pid after checking `/proc/<pid>/cwd`).
+
 ## Next steps
 
 1. Single environment again: pin Python in `environment.yml` (e.g. `>=3.10,<3.14`) and add
    `intarna>=3.4`, `rnahybrid`, `viennarna>=2.6` with minimum versions; check with a dry solve
    (`mamba env create --dry-run -f environment.yml`). If it solves, drop `smithhunter2-rna`.
-2. Module B step 2 (`docs/module_b_design.md` sections 4.2-4.3): wrap IntaRNA (whole region for
-   accessibility, `--tRegion` on the site, seed pinned to guide 2-8) and RNAhybrid (window around
-   the site, `-f` matching the seed, `-d xi,theta` from RNAcalibrate on the same regions); score
-   real and decoy sites; q-values with `targets/fdr.py:qvalues`; `support` column. Add stored
-   tool outputs as parser test fixtures; extend the simulation check.
+2. (done 2026-11-09) Module B step 2. Left: run the calibration on the bacterial -> host data
+   (`calib_bacterial_rnai`), extend `evaluate` to check q-values on the simulation, miRanda.
 3. Then: precursor folding (step 3), bacterial mode (step 4), plots of module B in the report.
 4. Module A: run on a full-size real library to tune thresholds, then legacy comparison with v0.
    Optional tools later (MINTmap, Kraken2 on unmapped reads, ShortStack cross-check, AGO-CLIP).

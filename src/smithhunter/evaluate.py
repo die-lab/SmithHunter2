@@ -259,9 +259,46 @@ def evaluate_targets(truth_dir: str, results_dir: str, rows: list[dict]):
         out.append({**p, "candidate": cid or "", "found_class": best, "found": int(found)})
     n = sum(r["found"] for r in out)
     text = f"Planted target sites found with their class (or better): {n}/{len(out)}\n"
+    scored_files = sorted(Path(results_dir).glob("targets/*/sites_scored.tsv"))
+    if scored_files:
+        text += scored_summary(out, [x for path in scored_files for x in read_tsv(str(path))])
     text += "".join(f"  missing: {r['feature_id']} {r['site_class']} in {r['transcript']} "
                     f"(candidate {r['candidate'] or 'none'})\n" for r in out if not r["found"])
     return out, text
+
+
+def overlaps_planted(row: dict, p: dict, cid: str) -> bool:
+    if row["candidate"] != cid or row["transcript"] != p["transcript"] or not row["genomic"]:
+        return False
+    _, a, b = parse_genomic(row["genomic"])
+    return a <= int(p["genomic_end"]) and b >= int(p["genomic_start"])
+
+
+def scored_summary(planted: list[dict], scored: list[dict]) -> str:
+    """Support (q-value based) of the planted sites and of everything else.
+
+    Planted sites with extended pairing should be supported; bare seed sites are not
+    expected to beat decoys (a seed match alone is not a target); the share of unplanted
+    sites with support >= 1 estimates the false discovery of the whole procedure and should
+    be near the FDR threshold or below."""
+    hit = set()
+    groups = {"extended pairing": [], "bare seed": []}
+    for p in planted:
+        cid = p.get("candidate", "")
+        rows = [r for r in scored if overlaps_planted(r, p, cid)]
+        hit.update(id(r) for r in rows)
+        support = max((int(r["support"]) for r in rows), default=-1)
+        groups["extended pairing" if int(p.get("extension") or 0) else "bare seed"].append(support)
+    others = [r for r in scored if id(r) not in hit]
+    fp = sum(1 for r in others if int(r["support"]) >= 1)
+    text = "Scored sites (support = predictors with q <= FDR):\n"
+    for name, vals in groups.items():
+        if vals:
+            text += (f"  planted, {name}: support >= 1 in {sum(v >= 1 for v in vals)}/{len(vals)}, "
+                     f"unscored {sum(v < 0 for v in vals)}\n")
+    text += (f"  other sites with support >= 1: {fp}/{len(others)}"
+             f" ({fp / len(others):.1%})\n" if others else "")
+    return text
 
 
 def run(truth_dir: str, results_dir: str, outdir: str) -> str:

@@ -1,10 +1,10 @@
-# RNA tools for module B. Kept apart from environment.yml: with recent Python the solver
-# falls back to IntaRNA 1.x and ViennaRNA 2.4 (Python 2.7 builds) in a shared env.
-# Create once: mamba env create -n smithhunter2-rna -f workflow/envs/rna.yaml
+# RNA tools for module B (per-rule conda mode). The single environment.yml also holds them
+# now (Python < 3.14 keeps the solver on IntaRNA 3 and ViennaRNA 2.7).
 channels:
   - conda-forge
   - bioconda
 dependencies:
+  - python>=3.10,<3.14
   - intarna>=3.4
   - rnahybrid>=2.1.2
   - viennarna>=2.6
