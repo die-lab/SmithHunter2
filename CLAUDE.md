@@ -1,5 +1,8 @@
 # SmithHunter2 – development notes
 
+> **Resuming? Start with `docs/HANDOFF.md`** (state, running jobs, ordered next steps, server rules),
+> then `docs/module_b_development_log.md`. The notes below are older.
+
 Context for anyone (human or Claude) continuing this project. Read this first.
 
 ## Working with the maintainer
