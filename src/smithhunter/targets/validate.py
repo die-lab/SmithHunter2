@@ -32,7 +32,8 @@ def gene_table(target_rows):
                 v = float(v)
                 g[p] = v if g[p] is None else fn(g[p], v)
         g["support"] = max(g["support"], int(r.get("support") or 0))
-        for col in ("best_intarna_q", "best_rnahybrid_q"):
+        # best_q already respects support_from (predictors ignored for calls)
+        for col in (("best_q",) if "best_q" in r else ("best_intarna_q", "best_rnahybrid_q")):
             q = r.get(col)
             if q not in (None, ""):
                 g["q"] = float(q) if g["q"] is None else min(g["q"], float(q))
@@ -66,7 +67,11 @@ def validate(target_rows, truth, genes_per_candidate: dict[str, set] | None = No
     by_cand: dict[str, dict[str, dict]] = defaultdict(dict)
     for (cid, gene), g in table.items():
         by_cand[cid][gene] = g
-    rows, auc_parts = [], {p: [0.0, 0] for p in list(PREDICTORS) + ["support"]}
+    # a predictor that was not computed has no values at all: leave it out instead of ranking
+    # every gene last (which would read as an AUC of 0.5)
+    used = [p for p in PREDICTORS if any(v[p] is not None for v in table.values())]
+    names = used + ["support"]
+    rows, auc_parts = [], {p: [0.0, 0] for p in names}
     pcts: dict[str, list[float]] = {p: [] for p in auc_parts}
     for t in truth:
         cid, gene = t["candidate"], t["gene"]
@@ -76,7 +81,10 @@ def validate(target_rows, truth, genes_per_candidate: dict[str, set] | None = No
         n = len(universe)
         row = {"candidate": cid, "gene": gene, "n_genes": n, "scored": int(gene in genes),
                "note": t.get("note", "")}
-        for p in list(PREDICTORS) + ["support"]:
+        for p in PREDICTORS:
+            if p not in used:
+                row[f"{p}_rank"] = row[f"{p}_pct"] = ""
+        for p in names:
             if p == "support":  # higher is better: rank on the negative
                 vals = {g: -v["support"] if v["support"] else None for g, v in genes.items()}
             else:
@@ -97,6 +105,7 @@ def validate(target_rows, truth, genes_per_candidate: dict[str, set] | None = No
         row["support"] = genes.get(gene, {}).get("support", 0)
         rows.append(row)
     summary = {p: (round(a / k, 4) if k else None) for p, (a, k) in auc_parts.items()}
+    summary = {p: summary.get(p) for p in list(PREDICTORS) + ["support"]}   # None: not computed
     from statistics import median
     detail = {p: {"median_pct": round(median(v), 4), "top5": round(sum(x <= 0.05 for x in v) / len(v), 4),
                   "top10": round(sum(x <= 0.10 for x in v) / len(v), 4)}

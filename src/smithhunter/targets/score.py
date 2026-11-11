@@ -8,13 +8,18 @@ a real site is the lowest FDR over the thresholds it passes, with
     FDR(s) = (decoy sites scoring <= s / decoys per candidate) / (real sites scoring <= s)
 
 computed pooled over candidates and, alongside, for the candidate alone (``*_q_cand``).
-``support`` is the number of predictors whose pooled q-value is at most ``fdr``.
+``support`` is the number of counted predictors whose pooled q-value is at most ``fdr``; it
+is a count of agreeing predictors, not a confidence. Calls are the UNION: a site is called
+when ANY counted predictor passes (``called_by`` lists them, ``best_q`` is the smallest q), so
+a predictor that does not suit the data never removes a call. Which predictors are computed
+and which count is policy, see ``predictors.py`` (``predictors``, ``support_from``).
 
 Two-stage mode (``intarna_prefilter`` < 1, both predictors): RNAhybrid, ~15x cheaper, scores
 every site first; IntaRNA then scores the sites whose MFE is in the best share of each class,
 the cutoff being one pooled threshold per class over real and decoy sites together. Real and
 decoy sites meet the same rule, so the q-values stay valid; they are conditional on passing it,
-and sites below the cutoff have no IntaRNA values.
+and sites below the cutoff have no IntaRNA values (``prefilter_keep_classes`` are always
+scored by IntaRNA in full; the sites IntaRNA never saw are counted in ``prefilter_summary.tsv``).
 
 Identical region sequences (isoforms sharing a UTR) are scored once and reported for
 every region that carries them. Only the best class of each site is scored, and by
@@ -37,6 +42,7 @@ from dataclasses import dataclass, field, replace
 
 from ..seqio import write_tsv
 from . import intarna, rnahybrid
+from . import predictors as pred
 from .fdr import qvalues
 from .regions import Region
 from .sites import Site, context, scan, site_classes
@@ -71,6 +77,12 @@ class ScoreConfig:
     intarna_batch: int = 50         # windows per IntaRNA process (0: one process per site);
     # small RNAs that share a window are scored in one process too. Both give the same
     # numbers as one process per site, so neither is part of the run signature.
+    # predictor policy (predictors.py)
+    mode: str = "ago"                       # ago | bacterial | cross-kingdom (warnings, defaults)
+    support_from: tuple[str, ...] | None = None  # predictors that count for calls; None = all scored
+    prefilter_by: str = "rnahybrid"         # the cheap predictor that decides what IntaRNA sees
+    prefilter_keep_classes: tuple[str, ...] = ()  # classes IntaRNA always scores in full
+    report_dir: str = ""                    # where predictor_report.tsv / prefilter_summary.tsv go
 
 
 def scored_classes(classes, cfg: ScoreConfig):
@@ -115,6 +127,8 @@ def run_signature(stage: str, guides, unique, seed, classes, cfg: ScoreConfig) -
     if stage == "final":
         settings += [cfg.predictors, cfg.intarna_flank, cfg.intarna_prefilter, cfg.temperature,
                      cfg.intarna_extra]
+        if cfg.intarna_prefilter < 1.0 and cfg.prefilter_keep_classes:  # changes which sites IntaRNA sees
+            settings.append(sorted(cfg.prefilter_keep_classes))
     h.update(repr(settings).encode())
     return h.hexdigest()
 
@@ -499,6 +513,7 @@ def run_scoring(candidates, decoys, regions: list[Region], seed=(2, 8), classes=
                 log=print):
     """Score all sites. ``candidates`` are (id, sequence); ``decoys`` (id, candidate, seq)."""
     cfg = cfg or ScoreConfig()
+    pred.check_config(cfg, log)
     classes = scored_classes(tuple(classes or site_classes(seed)), cfg)
     by_seq: dict[str, list[Region]] = defaultdict(list)
     for r in regions:
@@ -569,8 +584,7 @@ def run_scoring(candidates, decoys, regions: list[Region], seed=(2, 8), classes=
                                                    "RNAhybrid ")))
                 save_checkpoint(ck_stage1, sig_stage1, scores)
             cutoff = prefilter_cutoffs(scores, cfg.intarna_prefilter)
-            keep = [j for j in jobs if scores[j].get("rnahybrid_mfe") is not None
-                    and scores[j]["rnahybrid_mfe"] <= cutoff[j[5]]]
+            keep = pred.prefilter_keep(jobs, scores, cutoff, cfg.prefilter_keep_classes)
             log(f"RNAhybrid scored {len(jobs)} sites in {time.time() - t0:.0f} s; "
                 f"{len(keep)} pass the prefilter (best {cfg.intarna_prefilter:.0%} per class, "
                 f"cutoffs {', '.join(f'{c} {v:.1f}' for c, v in sorted(cutoff.items()))})")
@@ -624,6 +638,9 @@ def run_scoring(candidates, decoys, regions: list[Region], seed=(2, 8), classes=
                                               plus_one=plus_c)):
                     qcand[(pname, k)] = q
 
+    counted = pred.counted_predictors(cfg.predictors, cfg.support_from)
+    report_predictors(scores, decoy_of, n_decoys, classes, qpool, counted, cfg, log)
+
     site_rows = []
     for job, res in scores.items():
         gid, si, start, end, t1, cls = job
@@ -631,8 +648,8 @@ def run_scoring(candidates, decoys, regions: list[Region], seed=(2, 8), classes=
             continue
         site = Site(start, end, t1, cls)
         seq = unique[si]
-        support = sum(1 for p in cfg.predictors
-                      if qpool.get((p, job), 1.0) <= cfg.fdr)
+        support, called_by, best_q = pred.calls_of(
+            {p: qpool.get((p, job)) for p in counted}, counted, cfg.fdr)
         for r in by_seq[seq]:
             g, g_end = r.genomic(start), r.genomic(end - 1)
             genomic = (f"{r.contig}:{min(g, g_end) + 1}-{max(g, g_end) + 1}({r.strand})"
@@ -640,17 +657,44 @@ def run_scoring(candidates, decoys, regions: list[Region], seed=(2, 8), classes=
             row = {"candidate": gid, "region_id": r.id, "transcript": r.transcript,
                    "gene": r.gene, "region": r.region, "site_class": cls,
                    "site_start": start + 1, "site_end": end, "genomic": genomic,
-                   **context(guides[gid], seq, site, r.region), **res, "support": support}
+                   **context(guides[gid], seq, site, r.region), **res, "support": support,
+                   "called_by": called_by, "best_q": best_q}
             for p in cfg.predictors:
                 row[f"{p}_q"] = qpool.get((p, job), "")
                 row[f"{p}_q_cand"] = qcand.get((p, job), "")
             site_rows.append(row)
     order = {c: i for i, c in enumerate(classes)}
     site_rows.sort(key=lambda r: (r["candidate"], -r["support"], order[r["site_class"]],
-                                  r.get("intarna_E") if r.get("intarna_E") is not None else 0.0))
+                                  site_energy(r, cfg)))
 
     target_rows = summarise_targets(site_rows, cfg)
     return classes, site_rows, target_rows, curves
+
+
+def site_energy(row, cfg: ScoreConfig) -> float:
+    """Sort key within a class: the IntaRNA energy, or the RNAhybrid MFE when IntaRNA is not
+    computed (never mixed: the two scales differ); 0 for a site without a score."""
+    col = "intarna_E" if "intarna" in cfg.predictors else "rnahybrid_mfe"
+    return row[col] if row.get(col) is not None else 0.0
+
+
+def report_predictors(scores, decoy_of, n_decoys, classes, qpool, counted, cfg: ScoreConfig, log):
+    """Suitability diagnostic and prefilter cost, logged and (with ``cfg.report_dir``) written to
+    ``predictor_report.tsv`` and ``prefilter_summary.tsv``. Advice only: calls are not touched."""
+    rows = pred.diagnose(scores, decoy_of, n_decoys, cfg.predictors, classes, qpool, cfg.fdr,
+                         counted)
+    if rows:
+        pred.log_diagnosis(rows, cfg.fdr, log)
+    if pred.two_stage(cfg):
+        pf = pred.prefilter_summary(scores, decoy_of, prefilter_cutoffs(scores, cfg.intarna_prefilter),
+                                    cfg.prefilter_keep_classes, classes)
+        pred.log_prefilter(pf, cfg, log)
+    else:
+        pf = pred.prefilter_off_rows(scores, decoy_of, cfg)
+    if cfg.report_dir:
+        os.makedirs(cfg.report_dir, exist_ok=True)
+        pred.write_report(rows, os.path.join(cfg.report_dir, "predictor_report.tsv"))
+        pred.write_prefilter(pf, os.path.join(cfg.report_dir, "prefilter_summary.tsv"))
 
 
 def summarise_targets(site_rows, cfg: ScoreConfig):
@@ -668,13 +712,17 @@ def summarise_targets(site_rows, cfg: ScoreConfig):
         out.append({
             "candidate": cid, "transcript": transcript, "gene": gene,
             "scored_sites": len(rows), "support": top["support"],
+            # union over the sites of the gene: one counted predictor at one site is a call
+            "called_by": ",".join(p for p in cfg.predictors
+                                  if any(p in r.get("called_by", "").split(",") for r in rows)),
+            "best_q": best("best_q"),
             "best_site_class": top["site_class"],
             "best_intarna_E": best("intarna_E"), "best_rnahybrid_mfe": best("rnahybrid_mfe"),
             "best_intarna_q": best("intarna_q"), "best_rnahybrid_q": best("rnahybrid_q"),
             "sites_q_pass": sum(1 for r in rows if r["support"] > 0),
         })
-    out.sort(key=lambda r: (r["candidate"], -r["support"], r["best_intarna_q"] == "",
-                            r["best_intarna_q"] if r["best_intarna_q"] != "" else 1.0))
+    out.sort(key=lambda r: (r["candidate"], -r["support"], r["best_q"] == "",
+                            r["best_q"] if r["best_q"] != "" else 1.0))
     return out
 
 
@@ -686,8 +734,9 @@ SCORE_COLUMNS = ["candidate", "region_id", "transcript", "gene", "region", "site
                  "intarna_q_start", "intarna_q_end", "intarna_duplex", "intarna_q",
                  "intarna_q_cand",
                  "rnahybrid_mfe", "rnahybrid_p", "rnahybrid_pos", "rnahybrid_at_site",
-                 "rnahybrid_q", "rnahybrid_q_cand", "support"]
+                 "rnahybrid_q", "rnahybrid_q_cand", "support", "called_by", "best_q"]
 TARGET_SCORE_COLUMNS = ["candidate", "transcript", "gene", "scored_sites", "support",
+                        "called_by", "best_q",
                         "best_site_class", "best_intarna_E", "best_intarna_q",
                         "best_rnahybrid_mfe", "best_rnahybrid_q", "sites_q_pass"]
 CURVE_COLUMNS = ["predictor", "site_class", "threshold", "real_sites",

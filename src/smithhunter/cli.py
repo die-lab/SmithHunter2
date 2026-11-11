@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import defaultdict
 
@@ -214,6 +215,7 @@ def cmd_sites(args):
 def cmd_score_sites(args):
     from .targets.pipeline import read_candidates, read_decoys
     from .targets.regions import read_regions
+    from .targets.predictors import as_tuple, resolve_predictors
     from .targets.score import ScoreConfig, run_scoring, write_scores
     temperature = args.temperature
     if temperature is None:
@@ -226,16 +228,23 @@ def cmd_score_sites(args):
     ids = {cid for cid, _ in candidates}
     decoys = [d for d in read_decoys(args.decoys) if d[1] in ids] if args.decoys else []
     classes = args.classes.split(",") if args.classes else None
+    try:
+        chosen = resolve_predictors(args.mode, args.predictors)
+    except ValueError as exc:
+        sys.exit(f"score-sites: {exc}")
     cfg = ScoreConfig(
-        predictors=tuple(p for p in args.predictors.split(",") if p),
+        predictors=chosen, mode=args.mode,
+        support_from=as_tuple(args.support_from) if args.support_from is not None else None,
+        prefilter_by=args.prefilter_by,
+        prefilter_keep_classes=as_tuple(args.prefilter_keep_classes) or (),
+        report_dir=args.report_dir or (os.path.dirname(os.path.abspath(args.sites))
+                                       if args.sites else ""),
         score_weak_sites=args.score_weak_sites, temperature=temperature,
         intarna_flank=args.intarna_flank, rnahybrid_flank=args.rnahybrid_flank,
         intarna_prefilter=args.intarna_prefilter, timeout=args.timeout,
         rnahybrid_require_site=not args.rnahybrid_any_duplex, resume=not args.no_resume,
-        calibrate_samples=args.calibrate_samples, workers=args.workers, fdr=args.fdr)
-    unknown = set(cfg.predictors) - {"intarna", "rnahybrid"}
-    if unknown:
-        sys.exit(f"unknown predictor(s): {', '.join(sorted(unknown))}")
+        calibrate_samples=args.calibrate_samples, workers=args.workers, fdr=args.fdr,
+        rnahybrid_batch=args.rnahybrid_batch, intarna_batch=args.intarna_batch)
     result = run_scoring(candidates, decoys, read_regions(args.regions), parse_seed(args.seed),
                          classes, cfg, args.workdir, args.dry_run)
     if result is None:
@@ -458,13 +467,34 @@ def main(argv=None):
     s.add_argument("--genomes", default="", help="only candidates of these genomes")
     s.add_argument("--seed", default="2-8")
     s.add_argument("--classes", default="")
-    s.add_argument("--predictors", default="intarna,rnahybrid")
+    s.add_argument("--mode", default="ago", choices=["ago", "bacterial", "cross-kingdom"],
+                   help="interaction model; sets the default predictors (ago: IntaRNA and "
+                        "RNAhybrid, bacterial: IntaRNA only, cross-kingdom: both)")
+    s.add_argument("--predictors", default=None,
+                   help="comma list of predictors to COMPUTE (intarna,rnahybrid); a skipped one "
+                        "costs nothing and its columns stay empty. Default: by --mode")
+    s.add_argument("--support-from", default=None,
+                   help="comma list of predictors that COUNT when calling sites (default: all "
+                        "computed). Others are reported but ignored; calls are the union")
+    s.add_argument("--prefilter-by", default="rnahybrid", choices=["rnahybrid"],
+                   help="predictor that decides which sites IntaRNA scores when "
+                        "--intarna-prefilter < 1")
+    s.add_argument("--prefilter-keep-classes", default="",
+                   help="comma list of site classes that IntaRNA always scores in full despite "
+                        "the prefilter, e.g. 8mer")
+    s.add_argument("--report-dir", default=None,
+                   help="where predictor_report.tsv and prefilter_summary.tsv go "
+                        "(default: the directory of --sites)")
     s.add_argument("--score-weak-sites", action="store_true",
                    help="also score 6mer and offset-6mer sites (many more runs)")
     s.add_argument("--temperature", type=float, default=None,
                    help="deg C of the interaction (IntaRNA); set it for the organism: 37 is "
                         "wrong for most invertebrates and bacteria outside the host")
     s.add_argument("--intarna-flank", type=int, default=100)
+    s.add_argument("--rnahybrid-batch", type=int, default=2000,
+                   help="sites per RNAhybrid process (0: one process per site); same numbers")
+    s.add_argument("--intarna-batch", type=int, default=50,
+                   help="windows per IntaRNA process (0: one process per site); same numbers")
     s.add_argument("--intarna-prefilter", type=float, default=1.0,
                    help="<1: IntaRNA only on this best share of sites by RNAhybrid MFE "
                         "(per class, same rule for real and decoy sites)")

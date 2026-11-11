@@ -103,7 +103,32 @@ rule seed_sites:
         "--fdr {output.fdr} > {log} 2>&1"
 
 
-PREDICTORS = TARGETS_CFG.get("predictors", ["intarna", "rnahybrid"])
+def set_opt(tset, key, default=None):
+    """A scoring option of a target set: its own value, else the global `targets` value."""
+    ts = TARGET_SETS[tset]
+    return ts[key] if key in ts else TARGETS_CFG.get(key, default)
+
+
+def as_list(value):
+    return [value] if isinstance(value, str) else list(value or [])
+
+
+def predictors_arg(tset):
+    """`--predictors ...` when the set or `targets` names predictors, else nothing: the default
+    of the mode applies (ago: intarna + rnahybrid, bacterial: intarna only, cross-kingdom: both)."""
+    value = set_opt(tset, "predictors")
+    return "" if value is None else "--predictors '" + ",".join(as_list(value)) + "'"
+
+
+def scoring_on(tset):
+    """False only when the set or `targets` has `predictors: []` (seed sites only)."""
+    value = set_opt(tset, "predictors")
+    return value is None or bool(as_list(value))
+
+
+def support_arg(tset):
+    value = set_opt(tset, "support_from")
+    return "" if value is None else "--support-from '" + ",".join(as_list(value)) + "'"
 
 
 def only_sets(names):
@@ -123,17 +148,26 @@ rule score_sites:
         sites=OUT / "targets/{tset}/sites_scored.tsv",
         targets=OUT / "targets/{tset}/targets_scored.tsv",
         curves=OUT / "targets/{tset}/fdr_curves.tsv",
+        report=OUT / "targets/{tset}/predictor_report.tsv",
+        prefilter_summary=OUT / "targets/{tset}/prefilter_summary.tsv",
     params:
         genomes=lambda wc: ",".join(genomes_of_set(wc.tset)),
         classes=",".join(TARGETS_CFG.get("site_classes", [])),
-        predictors=",".join(PREDICTORS),
+        predictors=lambda wc: predictors_arg(wc.tset),
+        mode=lambda wc: set_mode(wc.tset),
+        support=lambda wc: support_arg(wc.tset),
+        keep_classes=lambda wc: ",".join(as_list(set_opt(wc.tset, "prefilter_keep_classes", []))),
+        prefilter_by=lambda wc: set_opt(wc.tset, "prefilter_by", "rnahybrid"),
+        rh_batch=lambda wc: set_opt(wc.tset, "rnahybrid_batch", 2000),
+        ia_batch=lambda wc: set_opt(wc.tset, "intarna_batch", 50),
         weak="--score-weak-sites" if TARGETS_CFG.get("score_weak_sites", False) else "",
         temperature=("--temperature " + str(TARGETS_CFG["temperature"])
                      if "temperature" in TARGETS_CFG else ""),
         calibrate=TARGETS_CFG.get("calibrate_samples", 1000),
         fdr=TARGETS_CFG.get("fdr", 0.05),
-        prefilter=TARGETS_CFG.get("intarna_prefilter", 1.0),
+        prefilter=lambda wc: set_opt(wc.tset, "intarna_prefilter", 1.0),
         workdir=lambda wc: OUT / f"targets/{wc.tset}/work",
+        reportdir=lambda wc: OUT / f"targets/{wc.tset}",
     threads: 8
     log:
         OUT / "logs/targets/{tset}.score.log",
@@ -142,9 +176,12 @@ rule score_sites:
     shell:
         "{SH} score-sites --candidates {input.candidates} --decoys {input.decoys} "
         "--regions {input.regions} --genomes {params.genomes} --seed {SEED} "
-        "--classes '{params.classes}' --predictors {params.predictors} {params.weak} "
-        "{params.temperature} --calibrate-samples {params.calibrate} "
-        "--fdr {params.fdr} --intarna-prefilter {params.prefilter} --workers {threads} --workdir {params.workdir} "
+        "--classes '{params.classes}' --mode {params.mode} {params.predictors} {params.support} "
+        "{params.weak} {params.temperature} --calibrate-samples {params.calibrate} "
+        "--fdr {params.fdr} --intarna-prefilter {params.prefilter} "
+        "--prefilter-by {params.prefilter_by} --prefilter-keep-classes '{params.keep_classes}' "
+        "--rnahybrid-batch {params.rh_batch} --intarna-batch {params.ia_batch} "
+        "--workers {threads} --workdir {params.workdir} --report-dir {params.reportdir} "
         "--sites {output.sites} --targets {output.targets} --curves {output.curves} "
         "> {log} 2>&1"
 
@@ -200,7 +237,8 @@ rule score_windows:
 rule targets:
     input:
         expand(OUT / "targets/{tset}/{f}.tsv", tset=AGO_SETS, f=["sites", "targets", "site_fdr"]),
-        expand(OUT / "targets/{tset}/{f}.tsv", tset=AGO_SETS if PREDICTORS else [],
-               f=["sites_scored", "targets_scored", "fdr_curves"]),
+        expand(OUT / "targets/{tset}/{f}.tsv", tset=[s for s in AGO_SETS if scoring_on(s)],
+               f=["sites_scored", "targets_scored", "fdr_curves", "predictor_report",
+                  "prefilter_summary"]),
         expand(OUT / "targets/{tset}/{f}.tsv", tset=BACTERIAL_SETS,
                f=["windows_scored", "targets_scored", "fdr_curves"]),

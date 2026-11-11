@@ -101,6 +101,8 @@ target_sets:
     # region_table: data/regions.tsv         # table: transcript, region, start, end (1-based)
     regions: [three_prime_UTR]               # also: five_prime_UTR, CDS, transcript
     whole_transcript_if_no_utr: false
+    # Per-set overrides of the scoring options of `targets` below (predictors, support_from,
+    # intarna_prefilter, prefilter_keep_classes, ...), e.g. predictors: [intarna]
   # Bacterial mode (bacterial small RNA -> bacterial mRNA, e.g. Hfq-dependent sRNAs): IntaRNA over
   # a window around the start codon of every CDS, no seed position, no RNAhybrid.
   # symbiont_mrna:
@@ -122,9 +124,23 @@ targets:
   seed: [2, 8]                                     # guide positions; v0 used [4, 10]
   decoys: 20                                       # dinucleotide-shuffled decoys each
   decoy_mode: shuffle                              # or match_seed_gc / keep_seed (see README)
-  predictors: [intarna, rnahybrid]                 # [] = seed sites only (no energy scoring)
+  # Predictors COMPUTED. Not set = by mode: ago -> intarna + rnahybrid, bacterial -> intarna only,
+  # cross-kingdom -> both (the last one only through `score-sites --mode`). [] = seed sites only.
+  # A skipped predictor costs nothing and its columns stay empty. See README "Choosing and
+  # ignoring predictors".
+  # predictors: [intarna, rnahybrid]
+  # Predictors that COUNT when calling sites (default: all computed). A predictor listed in
+  # `predictors` but not here is reported but ignored. Calls are the union: a site is called
+  # when ANY counted predictor has q <= fdr, `called_by` says which, `best_q` is the smallest q.
+  # support_from: [intarna, rnahybrid]
   score_weak_sites: false                          # also score 6mer / offset-6mer (many more runs)
   temperature: 37                                  # deg C for IntaRNA: SET IT for your organism (not set = 37 with a warning)
   calibrate_samples: 1000                          # RNAcalibrate sample size per small RNA (0: preset)
-  intarna_prefilter: 1.0                           # <1: IntaRNA only on this best share of sites by RNAhybrid MFE
+  intarna_prefilter: 1.0                           # <1: IntaRNA only on this best share of sites by RNAhybrid MFE.
+  #                                                  RISK: IntaRNA-only candidates are lost (see README); do not
+  #                                                  use it when IntaRNA suits the data better. Cost: prefilter_summary.tsv
+  prefilter_by: rnahybrid                          # the cheap predictor that decides what IntaRNA sees
+  prefilter_keep_classes: [8mer]                   # classes IntaRNA always scores in full despite the prefilter
+  rnahybrid_batch: 2000                            # sites per RNAhybrid process (0: one per site); same numbers
+  intarna_batch: 50                                # windows per IntaRNA process (0: one per site); same numbers
   fdr: 0.05                                        # q-value threshold for "support"

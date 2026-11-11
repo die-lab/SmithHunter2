@@ -310,8 +310,9 @@ decoys**, with the same code and settings:
 - **q-values**: for each predictor and site class, the FDR at a score is
   (decoy sites at least as good, per candidate) / (real sites at least as good), and the
   q-value of a site is the lowest FDR over the thresholds it passes. Pooled over candidates
-  (`*_q`) and for the candidate alone (`*_q_cand`). `support` is the number of predictors
-  with q <= `targets.fdr`. No score is a cut-off: all values stay in the table.
+  (`*_q`) and for the candidate alone (`*_q_cand`). `support` is the number of counted predictors
+  with q <= `targets.fdr`, `called_by` names them and `best_q` is the smallest of their q-values
+  (see "Choosing and ignoring predictors"). No score is a cut-off: all values stay in the table.
 - **Decoys** (`decoy_mode`): `shuffle` (default) uses dinucleotide shuffles of the whole small
   RNA, so a decoy has another seed and the test asks whether this sequence is special;
   `keep_seed` shuffles only the part 3' of the seed, so every decoy has exactly the real seed
@@ -332,7 +333,9 @@ decoys**, with the same code and settings:
   21 sequences with decoys. With a prefilter, RNAhybrid scores every site and IntaRNA only the
   best share of each class by MFE. The cutoff is one pooled threshold per class over real and
   decoy sites, so both meet the same rule and the q-values remain valid (conditional on passing
-  it); sites below the cutoff have RNAhybrid values only. Default 1.0 (off).
+  it); sites below the cutoff have RNAhybrid values only. Default 1.0 (off). **The prefilter can
+  lose real candidates**: a site that RNAhybrid scores poorly is never seen by IntaRNA. Read
+  "Choosing and ignoring predictors" before using it.
 - **Batched tools** (same numbers as one process per site, checked site by site in the tests).
   RNAhybrid scores up to `rnahybrid_batch` (2000) windows of one small RNA and seed range in one
   process (a multi-FASTA; a failing chunk is halved and retried, then scored site by site), which
@@ -342,17 +345,22 @@ decoys**, with the same code and settings:
   length and seed range, e.g. a candidate and its `keep_seed` decoys) are scored against it in
   one IntaRNA process, which computes the target accessibility once (up to `intarna_batch`
   windows per process; 7x on a keep_seed test). `ScoreConfig.rnahybrid_batch` and
-  `intarna_batch` set the sizes (0 restores one process per site); they are not in the CLI/config.
+  `intarna_batch` set the sizes (0 restores one process per site); CLI `--rnahybrid-batch` / `--intarna-batch`,
+  config `targets.rnahybrid_batch` / `targets.intarna_batch`.
 - 6mer and offset-6mer sites are only listed (`sites.tsv`); scoring them is opt-in
   (`score_weak_sites: true`) because they are ten times more frequent.
 
 ```yaml
 targets:
-  predictors: [intarna, rnahybrid]   # [] = seed sites only
+  predictors: [intarna, rnahybrid]   # computed; not set = by mode; [] = seed sites only
+  support_from: [intarna, rnahybrid] # counted for calls; not set = all computed
   score_weak_sites: false
   temperature: 37                    # deg C, set it for your organism
   calibrate_samples: 1000            # 0 = RNAhybrid preset
-  intarna_prefilter: 1.0             # e.g. 0.15 for large target sets
+  intarna_prefilter: 1.0             # e.g. 0.15 for large target sets (read the warning below)
+  prefilter_keep_classes: [8mer]     # classes IntaRNA always scores in full
+  rnahybrid_batch: 2000              # sites per RNAhybrid process (0: one per site)
+  intarna_batch: 50                  # windows per IntaRNA process (0: one per site)
   decoy_mode: shuffle                # or keep_seed
   fdr: 0.05
 ```
@@ -368,9 +376,91 @@ elsewhere. Progress and an ETA are printed every 5%.
 
 | file (`results/targets/<set>/`) | content |
 |---|---|
-| `sites_scored.tsv` | every scored site: class, context, IntaRNA and RNAhybrid scores, q-values, `support` |
-| `targets_scored.tsv` | one row per candidate and transcript: best energies and q-values, `support` |
+| `sites_scored.tsv` | every scored site: class, context, IntaRNA and RNAhybrid scores, q-values, `support`, `called_by`, `best_q` |
+| `targets_scored.tsv` | one row per candidate and transcript: best energies and q-values, `support`, `called_by`, `best_q` |
 | `fdr_curves.tsv` | real vs decoy sites per predictor, class and threshold |
+| `predictor_report.tsv` | per predictor and class: AUC of real vs decoy scores, medians, calls, a plain-language note (advice only) |
+| `prefilter_summary.tsv` | sites IntaRNA never scored because of the prefilter (a one-line note when it is off) |
+
+#### Choosing and ignoring predictors
+
+IntaRNA and RNAhybrid are not equally good on every kind of data, and a tool that does not suit
+your data should neither cost time nor remove real candidates. Three separate decisions, each in
+the config (globally under `targets:` or per target set under `target_sets:`):
+
+1. **Which predictors are computed** (`predictors`). A skipped predictor is not run at all (no
+   cost, no RNAcalibrate if RNAhybrid is skipped) and its columns in the tables are empty, never
+   0. Not set: the default of the set's `mode`: `ago` both, `bacterial` IntaRNA only,
+   `cross-kingdom` both. A `predictors` list on the target set beats the global one, which beats
+   the mode default (on the command line: `smithhunter score-sites --mode ... --predictors ...`).
+2. **Which predictors count for calls** (`support_from`, default all computed). A predictor that
+   is computed but not listed is *reported and ignored*: its score and q-value stay in the table,
+   it does not enter `support`, `called_by` or `best_q`.
+3. **Which sites IntaRNA sees** (the prefilter, below).
+
+**How calls are formed.** Calls are the **union**: a site (or a gene) is called when *any*
+counted predictor has q <= `fdr`. A tool that disagrees therefore never removes a call that
+another counted tool makes. Three columns next to each other in `sites_scored.tsv` and
+`targets_scored.tsv`:
+
+| column | meaning |
+|---|---|
+| `support` | number of counted predictors with q <= `fdr` (0, 1 or 2). **A count of agreeing predictors, not a confidence**: the two tools are correlated (Spearman 0.3-0.4), so 2 is not twice as good as 1, and 1 is a call, not half of one |
+| `called_by` | those predictors, comma separated (empty: not called). In `targets_scored.tsv` the union over the sites of the gene, so it can list a predictor that is not at the best site |
+| `best_q` | the smallest pooled q over the counted predictors (the minimum over the sites in `targets_scored.tsv`); empty when no counted predictor has a q-value |
+
+`validate-targets` uses `best_q` when present, and leaves out a predictor that was not computed
+(its AUC is `None`, not 0.5).
+
+**Which data suits which tool.** Starting points from our development log (section 6) and runs,
+to be confirmed on your data with `predictor_report.tsv` (below); the literature is thin and
+second-hand in places.
+
+| data | IntaRNA | RNAhybrid | suggestion |
+|---|---|---|---|
+| bacterial sRNA -> bacterial mRNA (`bacterial`) | well suited: accessibility in context; far better than RNAhybrid alone in the benchmark we found (Pain et al. 2015; scores as relayed by our literature check, scale not verified) | much worse alone | `predictors: [intarna]` (the mode default); no prefilter |
+| miRNA-like seed sites, 3'UTR (`ago`) | not benchmarked on miRNA data in the papers we found; in our positive control it has values for the best 15% of sites only (prefilter), so it was not compared | in our positive control (40 human miRNAs, 2,673 reporter pairs) the best MFE ranks validated genes with a gene-level AUC of about 0.79; counting strong sites alone gives 0.797, so this is mostly site number | both; read the report; keep `support_from` at the default unless the report says a tool adds nothing |
+| bacterial sRNA -> host (`cross-kingdom`) | plausible, untested here | plausible, untested here | both, then check the report and whether the host AGO is plausible |
+| your own data | run both on a small set first | same | read `predictor_report.tsv`, then decide |
+
+Examples:
+
+```yaml
+targets:
+  predictors: [intarna, rnahybrid]
+target_sets:
+  host:                           # human 3'UTRs: everything computed, IntaRNA decides the calls
+    mode: ago
+    support_from: [intarna]       # RNAhybrid stays in the table but makes no calls
+  symbiont:
+    mode: bacterial               # default predictors: [intarna] only
+    predictors: [intarna]         # (same as the default) RNAhybrid is not computed: no cost
+```
+
+**Does a predictor suit my data? `predictor_report.tsv`.** For each predictor and site class, from
+the same real and decoy sites and decoy weights as the q-values: number of real and decoy sites
+with a score, median real vs median decoy score, **AUC** (the probability that a random real site
+scores better than a random decoy site; 0.5 = no separation), the number of real sites with
+q <= `fdr`, whether the predictor is counted, and a note in plain language. When the AUC is
+within 0.5 +- 0.02 and nothing is called, the note says *"no separation from decoys: this
+predictor adds nothing for this data set"*. Three lines of it go to the log. **It only advises**:
+nothing is dropped from the calls automatically; you act on it with `predictors` and
+`support_from`. The unit is the site, and our miRNA control shows that site-level separation can
+be weak even for real targets (see the statistical notes), so a weak AUC is a reason to look, not
+proof of an unsuited tool. With a prefilter, the IntaRNA row covers only the sites it was run on
+(the note says so).
+
+**The prefilter (`intarna_prefilter` < 1) and what it risks.** RNAhybrid decides what IntaRNA
+sees: a site with a poor RNAhybrid MFE, or without any RNAhybrid duplex on its seed, is never
+scored by IntaRNA. A candidate that only IntaRNA would find (for instance accessibility-driven
+binding) is lost, and the decoys cannot measure that loss (the IntaRNA q-values are conditional
+on passing). Therefore: **do not use the prefilter when IntaRNA is the better-suited tool**
+(bacterial targets), and treat it as a cost saving for large `ago` runs, not as free.
+`prefilter_by` names the cheap predictor (only `rnahybrid` is implemented).
+`prefilter_keep_classes: [8mer]` makes IntaRNA score every site of the listed classes in full,
+whatever RNAhybrid says (8mers are the rarest and strongest, so this is cheap). The run logs how
+many sites IntaRNA never saw and writes `prefilter_summary.tsv` (per class, real and decoy:
+sites, RNAhybrid cutoff, passed, rescued by the class rule, never scored by IntaRNA).
 
 #### Statistical notes and limits
 
@@ -401,10 +491,13 @@ elsewhere. Progress and an ETA are printed every 5%.
   the part 3' of the seed is shuffled, so decoys have the real seed sites; the null is then
   "pairing beyond the seed", a different question, not an invalid one. On the *Pseudomonas*
   panel `shuffle` and `keep_seed` gave the same supported candidate (see the calibration notes).
-- **`support`** is the number of predictors (0-2) with pooled q <= the FDR. IntaRNA and RNAhybrid
-  both rank duplex energy and are correlated (Spearman 0.3-0.4 in our runs), so two votes are
-  not two independent tests and the count is not a probability. The error rate of
-  "support >= 1" can be as high as the sum of the two thresholds.
+- **`support`** is the number of counted predictors (0-2) with pooled q <= the FDR. IntaRNA and
+  RNAhybrid both rank duplex energy and are correlated (Spearman 0.3-0.4 in our runs), so two
+  votes are not two independent tests and the count is not a probability or a confidence. Calls
+  are the union (`support >= 1`, see `called_by`): the error rate of a union of two thresholds can
+  be as high as the sum of the two. That is the price of never losing a call because a tool that
+  does not suit the data disagrees; `support_from` removes a tool from the calls when you decide
+  it adds only noise.
 - **Two-stage mode** applies one pooled, label-blind cutoff per class to real and decoy sites
   alike, so the q-values of IntaRNA are conditional on passing the RNAhybrid prefilter (the
   decoy count and the real count are both taken among the survivors). A real site with a poor
