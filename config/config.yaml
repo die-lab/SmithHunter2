@@ -10,7 +10,8 @@ threads: 8
 #   role: exclude  -> the genome only competes for reads; its reads are counted, then dropped
 #   topology: circular -> reads across the origin are handled automatically
 #   length: [min, max] -> read length range for this genome (default: trimming range)
-#   targets: ago | bacterial | none -> interaction model used by module B (not yet implemented)
+#   targets: ago | bacterial | none -> old per-genome field: read as 'all target sets of that mode'
+#                                       (prefer `target_sets: [...]` below)
 genomes:
   mito:
     fasta: data/organism_mt.fasta
@@ -26,7 +27,7 @@ genomes:
   #   role: focus
   #   topology: circular
   #   length: [18, 40]
-  #   targets: bacterial
+  #   target_sets: [symbiont_mrna]   # its small RNAs are tested against bacterial mRNAs (see below)
 
 # Reads aligning equally well to more than one genome, at least one of them focus:
 #   discard -> dropped; report -> listed in origin tables, not used for loci;
@@ -90,7 +91,7 @@ ends:
 # ---------------------------------------------------------------------------------------
 # Module B (target prediction): snakemake -s workflow/Snakefile --cores 8 targets
 # Every target set is checked with the general seed-based logic; `mode: bacterial` is
-# opt-in (not implemented yet). A focus genome is tested against the sets listed in its
+# opt-in (see the commented example below). A focus genome is tested against the sets listed in its
 # `target_sets` (e.g. `target_sets: [host]`), or against all sets when it lists none.
 target_sets:
   host:
@@ -100,6 +101,21 @@ target_sets:
     # region_table: data/regions.tsv         # table: transcript, region, start, end (1-based)
     regions: [three_prime_UTR]               # also: five_prime_UTR, CDS, transcript
     whole_transcript_if_no_utr: false
+  # Bacterial mode (bacterial small RNA -> bacterial mRNA, e.g. Hfq-dependent sRNAs): IntaRNA over
+  # a window around the start codon of every CDS, no seed position, no RNAhybrid.
+  # symbiont_mrna:
+  #   mode: bacterial
+  #   genome: data/symbiont.fasta
+  #   annotation: data/symbiont.gff3       # GFF3 with CDS features (NCBI, Prokka, Bakta, ...)
+  #   window: [-200, 100]                  # relative to the start codon (A of AUG = +1)
+  #   topology: circular                   # windows continue across the origin (default: linear,
+  #                                        # windows are cut at contig ends)
+  #   # circular_contigs: [chr1]           # or name the circular contigs (replaces topology)
+  #   seed_bp: 7                           # IntaRNA seed, any position; 6-7 usual
+  #   # no_seed: true                      # no seed requirement at all
+  #   # acc_window: 150                    # IntaRNA --tAccW / --tAccL (local accessibility)
+  #   # acc_length: 100
+  #   temperature: 30                      # growth temperature of the study (default: targets.temperature)
 
 targets:
   candidates: results/discovery/candidates.fasta   # edit a copy to review candidates

@@ -110,4 +110,4 @@ def genomes_of_set(name):
 
 
 AGO_SETS = [s for s in TARGET_SETS if set_mode(s) == "ago" and genomes_of_set(s)]
-BACTERIAL_SETS = [s for s in TARGET_SETS if set_mode(s) == "bacterial"]
+BACTERIAL_SETS = [s for s in TARGET_SETS if set_mode(s) == "bacterial" and genomes_of_set(s)]

@@ -1,9 +1,31 @@
+import re
+
+
 wildcard_constraints:
     tset="[^/]+",
 
 
+def bacterial_regions_args(name, ts):
+    window = ts.get("window", [-200, 100])
+    if len(window) != 2 or not int(window[0]) < 0 < int(window[1]):
+        raise ValueError(f"config: target set {name!r}: window must be [-U, +D], e.g. [-200, 100]")
+    if not (ts.get("genome") and ts.get("annotation")):
+        raise ValueError(f"config: bacterial target set {name!r} needs genome + annotation (GFF3)")
+    topology = ts.get("topology", "linear")
+    if topology not in ("linear", "circular"):
+        raise ValueError(f"config: target set {name!r}: topology must be linear or circular")
+    args = ["--mode bacterial", f"--window={int(window[0])},{int(window[1])}",
+            f"--genome {ts['genome']}", f"--annotation {ts['annotation']}",
+            f"--topology {topology}"]
+    if ts.get("circular_contigs"):
+        args.append(f"--circular-contigs {','.join(ts['circular_contigs'])}")
+    return " ".join(args)
+
+
 def regions_args(wildcards):
     ts = TARGET_SETS[wildcards.tset]
+    if set_mode(wildcards.tset) == "bacterial":
+        return bacterial_regions_args(wildcards.tset, ts)
     wanted = ts.get("regions", ["three_prime_UTR"])
     args = [f"--regions {','.join(wanted)}"]
     if ts.get("genome"):
@@ -84,7 +106,15 @@ rule seed_sites:
 PREDICTORS = TARGETS_CFG.get("predictors", ["intarna", "rnahybrid"])
 
 
+def only_sets(names):
+    """Wildcard constraint: this rule serves exactly these target sets (rules of the two modes
+    write files with the same names, e.g. targets_scored.tsv)."""
+    return "|".join(re.escape(n) for n in names) or "(?!)"
+
+
 rule score_sites:
+    wildcard_constraints:
+        tset=only_sets(AGO_SETS),
     input:
         candidates=CANDIDATES,
         decoys=OUT / "targets/decoys.fasta",
@@ -119,9 +149,52 @@ rule score_sites:
         "> {log} 2>&1"
 
 
-if BACTERIAL_SETS:
-    print(f"SmithHunter2: bacterial mode is not implemented yet; target sets "
-          f"{', '.join(BACTERIAL_SETS)} are skipped.", file=sys.stderr)
+# Bacterial mode (opt-in, `mode: bacterial`): IntaRNA of every candidate and decoy against the
+# window around the start codon of every CDS; one q-value per best interaction of a window.
+# Settings per target set (all optional): window, topology, circular_contigs, seed_bp, no_seed,
+# acc_window, acc_length, temperature (default: targets.temperature).
+def windows_params(wc):
+    ts = TARGET_SETS[wc.tset]
+    args = []
+    temperature = ts.get("temperature", TARGETS_CFG.get("temperature"))
+    if temperature is not None:
+        args.append(f"--temperature {temperature}")
+    if ts.get("no_seed"):
+        args.append("--no-seed")
+    else:
+        args.append(f"--seed-bp {int(ts.get('seed_bp', 7))}")
+    args.append(f"--acc-window {int(ts.get('acc_window', 150))}")
+    args.append(f"--acc-length {int(ts.get('acc_length', 100))}")
+    return " ".join(args)
+
+
+rule score_windows:
+    wildcard_constraints:
+        tset=only_sets(BACTERIAL_SETS),
+    input:
+        candidates=CANDIDATES,
+        decoys=OUT / "targets/decoys.fasta",
+        regions=OUT / "targets/{tset}/regions.tsv",
+    output:
+        windows=OUT / "targets/{tset}/windows_scored.tsv",
+        targets=OUT / "targets/{tset}/targets_scored.tsv",
+        curves=OUT / "targets/{tset}/fdr_curves.tsv",
+    params:
+        genomes=lambda wc: ",".join(genomes_of_set(wc.tset)),
+        opts=windows_params,
+        fdr=TARGETS_CFG.get("fdr", 0.05),
+        workdir=lambda wc: OUT / f"targets/{wc.tset}/work",
+    threads: 8
+    log:
+        OUT / "logs/targets/{tset}.score_windows.log",
+    conda:
+        "../envs/rna.yaml"
+    shell:
+        "{SH} score-windows --candidates {input.candidates} --decoys {input.decoys} "
+        "--regions {input.regions} --genomes {params.genomes} {params.opts} "
+        "--fdr {params.fdr} --workers {threads} --workdir {params.workdir} "
+        "--windows {output.windows} --targets {output.targets} --curves {output.curves} "
+        "> {log} 2>&1"
 
 
 rule targets:
@@ -129,3 +202,5 @@ rule targets:
         expand(OUT / "targets/{tset}/{f}.tsv", tset=AGO_SETS, f=["sites", "targets", "site_fdr"]),
         expand(OUT / "targets/{tset}/{f}.tsv", tset=AGO_SETS if PREDICTORS else [],
                f=["sites_scored", "targets_scored", "fdr_curves"]),
+        expand(OUT / "targets/{tset}/{f}.tsv", tset=BACTERIAL_SETS,
+               f=["windows_scored", "targets_scored", "fdr_curves"]),

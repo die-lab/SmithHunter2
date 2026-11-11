@@ -133,7 +133,35 @@ def cmd_coverage(args):
     print(f"{n} covered positions on focus genomes")
 
 
+def parse_window(text: str) -> tuple[int, int]:
+    try:
+        a, b = (int(x) for x in text.split(","))
+    except ValueError:
+        sys.exit(f"--window must be UPSTREAM_NEG,DOWNSTREAM, e.g. --window=-200,100, got {text}")
+    if not a < 0 < b:
+        sys.exit(f"--window must run from a negative to a positive position, got {text}")
+    return a, b
+
+
+def cmd_regions_bacterial(args):
+    from .targets.regions import bacterial_windows, write_regions
+    if not (args.genome and args.annotation):
+        sys.exit("--mode bacterial needs --genome and --annotation (GFF3 with CDS features)")
+    circular = (set(filter(None, args.circular_contigs.split(","))) if args.circular_contigs
+                else args.topology == "circular")
+    stats: dict = {}
+    regions = bacterial_windows(args.genome, args.annotation, parse_window(args.window),
+                                circular, args.min_window, stats)
+    write_regions(args.out, regions)
+    print(f"{stats['windows']} start-codon windows from {stats['cds']} CDS "
+          f"({stats['clipped']} cut at contig ends, {stats['wrapped']} across the origin; "
+          f"skipped: {stats['partial']} without start codon, {stats['pseudo']} pseudo, "
+          f"{stats['too_short']} too short, {stats['no_contig']} contig not in the FASTA)")
+
+
 def cmd_regions(args):
+    if args.mode == "bacterial":
+        return cmd_regions_bacterial(args)
     from .targets.regions import regions_from_genome, regions_from_transcripts, write_regions
     wanted = args.regions.split(",")
     if args.genome:
@@ -216,6 +244,35 @@ def cmd_score_sites(args):
     write_scores(site_rows, target_rows, curves, args.sites, args.targets, args.curves)
     print(f"{len(site_rows)} scored sites, {len(target_rows)} targets, "
           f"{sum(1 for r in site_rows if r['support'] > 0)} sites with support >= 1")
+
+
+def cmd_score_windows(args):
+    from .targets.bacterial import BacterialConfig, run_window_scoring, write_windows
+    from .targets.pipeline import read_candidates, read_decoys
+    from .targets.regions import read_regions
+    temperature = args.temperature
+    if temperature is None:
+        temperature = 37.0
+        print("WARNING: --temperature not set, using 37 C. Set the temperature of the system you "
+              "study (the growth temperature of the bacterium).", file=sys.stderr)
+    genomes = set(filter(None, args.genomes.split(","))) if args.genomes else set()
+    candidates = [(cid, seq) for cid, genome, seq in read_candidates(args.candidates)
+                  if not genomes or not genome or genome in genomes]
+    ids = {cid for cid, _ in candidates}
+    decoys = [d for d in read_decoys(args.decoys) if d[1] in ids]
+    zone = tuple(int(x) for x in args.rbs_zone.split(","))
+    cfg = BacterialConfig(
+        temperature=temperature, seed_bp=args.seed_bp, no_seed=args.no_seed,
+        acc_window=args.acc_window, acc_length=args.acc_length, rbs_zone=zone,
+        workers=args.workers, fdr=args.fdr, timeout=args.timeout, resume=not args.no_resume)
+    result = run_window_scoring(candidates, decoys, read_regions(args.regions), cfg, args.workdir,
+                                args.dry_run)
+    if result is None:
+        return
+    window_rows, target_rows, curves = result
+    write_windows(window_rows, target_rows, curves, args.windows, args.targets, args.curves)
+    print(f"{len(window_rows)} (candidate, window) rows, {len(target_rows)} targets, "
+          f"{sum(r['pass_fdr'] for r in window_rows)} windows with q <= {args.fdr}")
 
 
 def cmd_validate_targets(args):
@@ -350,6 +407,20 @@ def main(argv=None):
                    help="comma-separated: three_prime_UTR, five_prime_UTR, CDS, transcript")
     s.add_argument("--whole-if-missing", action="store_true",
                    help="use the whole transcript when the wanted regions are missing")
+    s.add_argument("--mode", choices=["ago", "bacterial"], default="ago",
+                   help="bacterial: one window around the start codon of every CDS "
+                        "(needs --genome and --annotation)")
+    s.add_argument("--window", default="-200,100",
+                   help="bacterial: UPSTREAM,DOWNSTREAM relative to the start codon (A = +1); "
+                        "write it with '=' (--window=-200,100)")
+    s.add_argument("--topology", choices=["linear", "circular"], default="linear",
+                   help="bacterial: windows of circular contigs continue across the origin, "
+                        "those of linear contigs are cut at the ends")
+    s.add_argument("--circular-contigs", default="",
+                   help="bacterial: comma-separated contigs that are circular (all others "
+                        "linear); replaces --topology")
+    s.add_argument("--min-window", type=int, default=30,
+                   help="bacterial: drop windows shorter than this after cutting at contig ends")
     s.add_argument("--out", required=True)
     s.set_defaults(func=cmd_regions)
 
@@ -414,6 +485,36 @@ def main(argv=None):
     s.add_argument("--targets", help="scored targets table")
     s.add_argument("--curves", help="FDR curves table")
     s.set_defaults(func=cmd_score_sites)
+
+    s = sub.add_parser("score-windows",
+                       help="bacterial mode: IntaRNA of every small RNA and decoy against every "
+                            "start-codon window, q-values per best interaction of a window")
+    s.add_argument("--candidates", required=True)
+    s.add_argument("--decoys", required=True)
+    s.add_argument("--regions", required=True, help="regions.tsv made with --mode bacterial")
+    s.add_argument("--genomes", default="", help="only candidates of these genomes")
+    s.add_argument("--temperature", type=float, default=None,
+                   help="deg C of the interaction: the growth temperature of the study")
+    s.add_argument("--seed-bp", type=int, default=7,
+                   help="IntaRNA seed: base pairs, at any position (6-7 usual)")
+    s.add_argument("--no-seed", action="store_true", help="IntaRNA --noSeed")
+    s.add_argument("--acc-window", type=int, default=150, help="IntaRNA --tAccW")
+    s.add_argument("--acc-length", type=int, default=100, help="IntaRNA --tAccL")
+    s.add_argument("--rbs-zone", default="-20,-1",
+                   help="positions relative to the start codon counted as the RBS zone "
+                        "(hit_rbs); use --rbs-zone=-20,-1")
+    s.add_argument("--timeout", type=float, default=300,
+                   help="seconds per IntaRNA call; a hang counts as a failed window")
+    s.add_argument("--no-resume", action="store_true",
+                   help="ignore the checkpoint in the work directory")
+    s.add_argument("--fdr", type=float, default=0.05)
+    s.add_argument("--workers", type=int, default=1)
+    s.add_argument("--workdir", default=".", help="scratch directory (must not be /tmp)")
+    s.add_argument("--dry-run", action="store_true", help="only count the IntaRNA runs")
+    s.add_argument("--windows", help="scored windows table")
+    s.add_argument("--targets", help="scored targets table")
+    s.add_argument("--curves", help="FDR curves table")
+    s.set_defaults(func=cmd_score_windows)
 
     s = sub.add_parser("validate-targets",
                        help="rank of validated small RNA -> gene pairs among scored targets")

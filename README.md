@@ -269,8 +269,8 @@ snakemake -s /path/to/SmithHunter2/workflow/Snakefile --cores 8 targets
 
 Every target set uses the general seed-based logic: canonical site classes (8mer,
 7mer-m8, 7mer-A1, 6mer, offset-6mer) of the seed at guide positions 2–8. Bacterial mode
-(no seed rule, windows around start codons) will be opt-in per target set
-(`mode: bacterial`) and is not implemented yet. Target regions come from a genome with
+(no seed position, windows around start codons; see "Bacterial mode" below) is opt-in per
+target set (`mode: bacterial`). Target regions come from a genome with
 its GFF3 (spliced, both strands; UTRs are derived from the CDS when the GFF has no UTR
 features) or from a transcripts FASTA.
 
@@ -424,6 +424,94 @@ experimentally validated small RNA -> gene pairs among all genes (rank and perce
 IntaRNA, RNAhybrid and `support`, AUC over the pairs). With a handful of validated pairs
 this is a sanity check, not an estimate of precision.
 
+## Bacterial mode (bacterial small RNA -> bacterial mRNA)
+
+For small RNAs that act in bacteria on bacterial mRNAs (trans-encoded, usually Hfq-dependent
+sRNAs; no Argonaute, no guide strand), declare the target set with `mode: bacterial`. Nothing
+switches to this mode by itself, not even for a circular genome.
+
+```yaml
+genomes:
+  symbiont:
+    fasta: data/symbiont.fasta
+    role: focus
+    topology: circular
+    target_sets: [symbiont_mrna]
+target_sets:
+  symbiont_mrna:
+    mode: bacterial
+    genome: data/symbiont.fasta
+    annotation: data/symbiont.gff3     # GFF3 with CDS features (NCBI, Prokka, Bakta, mRNA/CDS style)
+    window: [-200, 100]                # relative to the start codon (A of AUG = +1, no position 0)
+    topology: circular                 # windows continue across the origin (default linear: cut at contig ends)
+    seed_bp: 7                         # IntaRNA seed, at any position
+    temperature: 30                    # growth temperature of the study (default: targets.temperature, else 37 with a warning)
+targets:
+  candidates: results/discovery/candidates.fasta
+  decoys: 20
+  fdr: 0.05
+```
+
+`snakemake ... targets` then runs `regions --mode bacterial`, the shared `decoys` rule and
+`score-windows` (rule `score_windows`) for this set. The same steps by hand:
+
+```bash
+smithhunter regions --mode bacterial --genome g.fasta --annotation g.gff3 --window=-200,100 \
+    --topology circular --out regions.tsv
+smithhunter decoys --candidates candidates.fasta --n 20 --out decoys.fasta
+smithhunter score-windows --candidates candidates.fasta --decoys decoys.fasta --regions regions.tsv \
+    --temperature 30 --seed-bp 7 --workers 2 --workdir work --windows windows_scored.tsv \
+    --targets targets_scored.tsv --curves fdr_curves.tsv       # --dry-run counts the IntaRNA runs
+```
+
+- **Windows.** One region (`start_window`) per annotated CDS: `window[0]`..`window[1]` around the
+  start codon on the CDS strand (default 200 nt upstream and the first 100 nt from the A of the
+  start codon). On circular contigs a window continues across the origin; on linear contigs it is
+  cut and the start codon keeps its place (`anchor`); windows shorter than `--min-window` (30) after
+  cutting are dropped. CDS without an annotated start codon (`start_range`, phase 1/2) and
+  `pseudo=true` are skipped; the run says how many. **Operons:** windows of neighbouring genes
+  overlap and the upstream part can lie inside the preceding gene on the same strand. Nothing is
+  removed; `upstream_cds` reports how many upstream nt are coding sequence of another gene, so
+  windows can be filtered afterwards.
+- **Scoring.** IntaRNA over the whole window (not around a seed site), local accessibility
+  (`--tAccW 150 --tAccL 100`, the IntaRNA defaults; `acc_window`, `acc_length`), a seed of `seed_bp`
+  base pairs at any position (`no_seed: true` for none), at the temperature of the study. G:U
+  pairs are allowed. One best interaction per (small RNA, window). RNAhybrid is neither used nor a
+  prefilter (it is far worse than IntaRNA for bacterial sRNAs). The query is the candidate sequence
+  as given: a read of 20-35 nt sees only a fragment of a 50-500 nt sRNA, so give full-length sRNAs
+  as candidates when they are known.
+- **Decoys and q-values.** The decoys of the `decoys` rule (any `decoy_mode`) are scored
+  identically. The unit of the FDR is the best interaction of one window: `intarna_q` compares the
+  best E of each real (small RNA, window) with that of the decoy windows (weights 1 / decoys of
+  the candidate, one pseudo decoy added), pooled over candidates; `intarna_q_cand` uses each
+  candidate's own decoys. There is no `support` (one predictor); `pass_fdr` is `intarna_q <= fdr`.
+  Pairs where IntaRNA finds no interaction under the seed rule are left out for real and decoy
+  alike. With 20 decoys a lone window cannot go below q = 0.05.
+- **Checkpoints.** The run is resumable (`work/windows_checkpoint/`, saved every minute; reused
+  only if candidates, decoys, windows and settings are identical), with a timeout per call and
+  tolerance for failing windows (the run stops if more than 5% fail).
+
+| file (`results/targets/<set>/`) | content |
+|---|---|
+| `regions.tsv` | one window per CDS: `anchor` (1-based position of the start codon in `sequence`), `upstream_cds`, `cds_nt`, genomic blocks |
+| `windows_scored.tsv` | every (candidate, window): best interaction, `intarna_E`, `intarna_ED_target`, `intarna_ED_query`, `intarna_Pu_*`, `intarna_E_hybrid`, `intarna_t_start`/`end` (1-based in the window), `intarna_q_start`/`end` (in the sRNA), `intarna_duplex`, `rel_start`/`rel_end` (relative to the start codon), `hit_region` (`5UTR`: entirely upstream of the start codon, 5'UTR/RBS or the preceding gene; `spans_start`; `CDS`), `hit_rbs` (overlaps -20..-1), `genomic` (start > end: crosses the origin), `intarna_q`, `intarna_q_cand`, `pass_fdr` |
+| `targets_scored.tsv` | one row per candidate and transcript (same column names as the other mode where they apply; `validate-targets` reads it) |
+| `fdr_curves.tsv` | real vs decoy windows per threshold (`site_class` = `window`) |
+
+Cost: runs = unique windows x candidates x (1 + decoys), about 0.15 s each on a loaded server
+(a 4,000-gene genome, 30 candidates and 20 decoys is about 2.5 million runs, roughly 100 CPU
+hours: use `--dry-run`, fewer candidates, or full-length sRNAs only).
+
+Evidence behind the defaults, and limits: the window follows the position of trusted sRNA-mRNA
+pairs (101 of 102 fall in -150..+100 around the start codon) and the IntaRNA benchmark settings
+(windows -200..+100, seed of 7 base pairs, local accessibility); the seed has no fixed position and
+is 6-12 nt with G:U pairs. The FDR is relative to a composition-matched random sRNA, not a
+probability that the pair is functional. Its power depends on the length of the pairing: on the
+synthetic checks in `docs/module_b_development_log.md` section 8, a perfect pairing of 12 bp in the
+RBS region (q = 0.25 among 200 random windows and 20 decoys) is not separable from the best chance
+interactions of shuffled decoys, one of 14 bp or more is (q = 0.05, the floor with 20 decoys); trans-encoded sRNAs with short imperfect pairing will be missed. CopraRNA (needs
+homologous genomes) is not used. Set the temperature to the growth temperature of the study.
+
 ## Benchmark on simulated data
 
 `smithhunter simulate` writes a complete experiment with known truth: synthetic
@@ -477,8 +565,8 @@ they check that the workflow runs, not that the results are meaningful.
 
 ## Roadmap
 
-1. Module B: precursor folding, then the opt-in bacterial mode. (Site scoring with
-   IntaRNA and RNAhybrid and decoy q-values is done.)
+1. Module B: precursor folding. (Site scoring with IntaRNA and RNAhybrid, decoy q-values and the
+   opt-in bacterial mode are done.)
 2. Report: plots of module B results.
 
 ## Citation

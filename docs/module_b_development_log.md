@@ -48,6 +48,11 @@ validate-targets: rank / percentile / AUC of validated pairs among all genes
 | D9 | two-stage mode: RNAhybrid on all sites, IntaRNA on the best share per class | 98 CPU-hours vs ~19 for 3.5M sites | valid with one pooled label-blind cutoff; IntaRNA q is conditional on passing; recall on the simulation 4/4 at 15% and 30%; recall on real data NOT measured |
 | D10 | checkpoints, timeouts, per-site error tolerance (stop above 5%) | hours-long shared-server runs | tested (fakes + end-to-end identical outputs on resume) |
 | D11 | strong classes only by default (`score_weak_sites: false`) | 6mer / offset-6mer are ~10x more frequent | cost decision, not a biological one |
+| D12 | `bacterial` mode: IntaRNA over the whole start-codon window (-200..+100), seedBP 7 at any position, local accessibility (tAccW 150, tAccL 100), no RNAhybrid and no prefilter | trusted sRNA-mRNA pairs lie in -150..+100 (101 of 102); the IntaRNA 2.0 benchmark used -200..+100 and seedBP 7; RNAhybrid alone is much worse than IntaRNA for bacteria (section 6) | literature, second-hand (section 6); implemented 2026-11-10; behaviour checked on synthetic data only (section 8), no real sRNA positive control yet |
+| D13 | unit of the FDR in bacterial mode = best interaction per (small RNA, window), not per seed match | the miRNA positive control showed that the unit matters (section 3b): many site-level hits per gene gave no power. One interaction per window keeps the number of tries equal to the number of genes for real and decoy alike | by construction; power on planted pairs in section 8 |
+| D14 | windows of neighbouring operon genes overlap and may contain the end of the upstream CDS: kept, `upstream_cds` reports the overlap | sRNAs also pair inside upstream coding sequence; the 5'UTR is not annotated in most genomes; removing the overlap would hide real pairs | design decision; not evaluated on real data |
+| D15 | circular contigs: the window continues across the origin (`topology: circular` / `circular_contigs`); linear contigs: cut, the start codon keeps its place | otherwise the windows near the origin of a circular genome are wrong | unit tests on both strands (genome mapping checked base by base); end-to-end test with a planted site straddling the origin |
+| D16 | IntaRNA energy only: `intarna_q` (pooled) and `intarna_q_cand`; no `support` | one predictor; same weighted target-decoy logic as D7 (decoy weights, +1) | unit tests with a faked IntaRNA; real tool in section 8 |
 
 ## 3. Experiments (what was run, what came out)
 
@@ -103,7 +108,7 @@ validate-targets: rank / percentile / AUC of validated pairs among all genes
 
 1. A **seed-based positive control with real numbers** (miRNA run) and the decoy-mode comparison on it.
 2. **Bacterial side:** the Wolbachia small-RNA libraries through module A (focus = Wolbachia,
-   exclude = Aedes), then candidates against Aedes 3'UTRs; and the planned `bacterial` mode
+   exclude = Aedes), then candidates against Aedes 3'UTRs; and the `bacterial` mode (now implemented, section 8)
    (start-codon windows, no fixed seed) for bacterium -> bacterium targets.
 3. **Which mechanism applies to which genome** (AGO-guided seed rules for mitochondrial and for
    bacterial small RNAs in a host vs Hfq-style pairing inside the bacterium): a literature
@@ -132,8 +137,8 @@ to be tested, not as a finding.
 Consequences for the code (status):
 - done: `seed` configurable (non-canonical classes work, `t1` bug fixed); `temperature` warns when unset;
   `regions` accepts CDS / 5'UTR / 3'UTR per target set.
-- to do: keep one q-value per region type; `bacterial` mode (start-codon windows, IntaRNA only, no RNAhybrid
-  prefilter); a `cross-kingdom` preset in the config; make the unit of "unvalidated mechanism" explicit in the output.
+- done (2026-11-10): `bacterial` mode (start-codon windows, IntaRNA only, no RNAhybrid prefilter; section 8).
+- to do: keep one q-value per region type; a `cross-kingdom` preset in the config; make the unit of "unvalidated mechanism" explicit in the output.
 - noted: the smithRNA papers quote RNAhybrid thresholds in kJ although RNAhybrid reports kcal/mol (probable labelling slip, I).
 
 ## 7. Checklist for the final documentation
@@ -142,5 +147,55 @@ Consequences for the code (status):
 - [ ] Per-organism parameter presets (section 6) with the evidence for each
 - [ ] Validation chapter: simulation, miRNA positive control, bacterial/cross-kingdom cases, negatives included
 - [ ] Reproduction commands for every number quoted
+- [x] Bacterial mode implemented and documented in the README (2026-11-10); a real positive control is still open
 - [ ] Environment created and `pytest` + CI green on a clean machine
 - [ ] Cleanup: `.scratch_solve/`, simulation and scratch directories; git commit and push (not done: nothing is committed)
+
+## 8. Bacterial mode: synthetic checks (2026-11-10)
+
+Code: `targets/bacterial.py` (scoring), `targets/regions.py` (`bacterial_windows`). Tests:
+`tests/test_bacterial.py` (windows on both strands, clipping, circular wrap, GFF flavours, q-values with
+a faked IntaRNA, checkpoint/resume, one test with the real IntaRNA and one end-to-end run).
+These are checks of the machinery on planted data, not a validation on real sRNA-mRNA pairs.
+
+**Power by length of the planted pairing.** One sRNA (22 nt), 200 random windows of 300 nt (GC
+0.4-0.6, start codon at 201), 5 planted windows (random, GC 0.5, complementary to the 5' 10/12/14/16/18 nt
+of the sRNA, ending at -9), 20 decoys (dinucleotide shuffles), IntaRNA seedBP 7, tAccW 150, 37 C:
+4,305 IntaRNA runs. IntaRNA found no interaction in 601 of the 4,305 pairs (14%; the seed rule
+excludes them, for real and decoy alike). Best E of the 162 random windows with an interaction:
+median -5.9, minimum -14.8. Decoys (3,449 pairs with an interaction): median -6.2, minimum
+-18.7, 30 pairs <= -14, 114 <= -12.
+
+| planted pairing | E (kcal/mol) | hit | q alone among the 200 random windows |
+|---|---|---|---|
+| 10 bp | -10.0 | 5UTR, RBS | 1.00 |
+| 12 bp | -16.6 | 5UTR, RBS | 0.25 |
+| 14 bp | -21.2 | 5UTR, RBS | 0.05 |
+| 16 bp | -25.1 | 5UTR, RBS | 0.05 |
+| 18 bp | -25.2 | 5UTR, RBS | 0.05 |
+
+No random window passed q <= 0.05 (0 of 200). q = 0.05 is the floor with 20 decoys and one passing
+window (the +1 pseudo decoy), so "supported" at an FDR of 0.05 means that no decoy window in 20 x 200
+tries scored better. **A perfect 12-bp pairing is not separable from chance** at this scale (the
+best chance interactions of shuffled decoys reach -14..-19); 14 bp or more is. Real sRNA-mRNA
+duplexes are usually longer than 12 bp but often imperfect, so the sensitivity for short or
+interrupted pairing is limited by the null, not by the code; more decoys lower the floor of q but
+not the ratio. The task asked for a pairing of about 12 bp; the end-to-end test uses 16 bp for this reason.
+
+**End to end.** A synthetic circular genome (30 genes on both strands, GFF3, two windows crossing the
+origin), one candidate with a 16-bp target planted at -34..-19 of the last gene (minus strand, the
+target straddling the origin), one random candidate, 20 decoys each, run through `regions --mode
+bacterial`, `decoys` and `score-windows`: the planted window is the top row (E -22.6, q 0.05, `5UTR`,
+`hit_rbs` 1), the reported genomic span maps back to the planted positions in the genome (start > end,
+across the origin), the random candidate has no window with q <= 0.05. A 12-gene version went through
+the Snakemake rules (`targets`) with the same tables.
+
+Cost measured: 0.15-0.2 s per IntaRNA run (300-nt window, 22-nt query) on the loaded shared server;
+batching several windows into one call did not make a run faster (the time is the dynamic
+programming, not the start-up).
+
+Open points: no real positive control (a published sRNA with known targets in a genome with a GFF3
+would test the window and the seed settings); seedBP 6 vs 7 and `no_seed` not compared; sensitivity
+to the window size and to the temperature not measured; the query is a fragment when only reads are
+available (section 6); decoys are shuffles of the query only (shuffled mRNA windows are not used as a
+second null); windows with `upstream_cds` > 0 are not treated separately.

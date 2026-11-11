@@ -1,6 +1,6 @@
 # Module B – target prediction and precursor folding: design
 
-Status: agreed design, not implemented. The decisions of section 11 were accepted as
+Status: agreed design; steps 1, 2 and 4 of section 10 are implemented. The decisions of section 11 were accepted as
 proposed (2026-10-09). The general seed-based logic (`ago`) is the default for every target
 set; `bacterial` mode runs only on target sets the user declares as bacterial.
 
@@ -202,20 +202,35 @@ decoys) that makes about 10⁵–10⁶ IntaRNA site evaluations: hours on a few 
 
 ## 5. `bacterial` mode (opt-in, per target set)
 
-Used only for target sets declared with `mode: bacterial`. Implemented after the general
-logic is working and tested.
+Used only for target sets declared with `mode: bacterial`. Implemented (2026-11-10):
+`regions --mode bacterial`, `score-windows`, rule `score_windows`; code in
+`targets/bacterial.py` and `targets/regions.py`.
 
-
-- **Regions**: −200..+100 nt around each start codon.
-- **Search**: IntaRNA over the whole window. There is no seed range, but IntaRNA's own
-  seed requirement applies (default 7 bp, any position). Both partners' accessibility is
-  included.
-- **Predictors**: RNAhybrid and the site classes are not used (they model AGO guides).
-  CopraRNA, which needs several related genomes, is a later option.
-- **FDR**: decoys as in 4.3, pooled over all windows.
+- **Regions**: for every annotated CDS, `window` = [-200, +100] around the start codon (A of
+  the start codon = +1, no position 0), on the CDS strand. Cut at the ends of linear contigs or
+  continued across the origin of circular ones (`topology: circular`, or `circular_contigs`).
+  Regions keep the `regions.tsv` layout, plus `anchor` (position of the start codon in the
+  window), `upstream_cds` and `cds_nt`. CDS without a start codon and pseudogenes are skipped.
+  Overlapping operons: windows of neighbouring genes overlap and may contain the end of the
+  upstream gene; they are kept (sRNAs also pair there; the annotated 5'UTR is usually not known)
+  and `upstream_cds` counts the upstream nt that are coding sequence of another gene.
+- **Search**: IntaRNA over the whole window, one best interaction per (small RNA, window). No seed
+  *position*: IntaRNA's own seed rule applies (`seed_bp`, default 7, anywhere; `no_seed` for none),
+  with local accessibility of both partners (`tAccW` 150, `tAccL` 100), G:U allowed, at the
+  temperature of the study. Interaction coordinates are reported in the window and relative to
+  the start codon, with the part of the window hit (`5UTR` incl. RBS / `spans_start` / `CDS`) and
+  whether the RBS zone (-20..-1) is touched.
+- **Predictors**: only IntaRNA. RNAhybrid and the site classes model AGO guides; RNAhybrid is also
+  not a prefilter (it is much worse than IntaRNA on bacterial sRNA-mRNA pairs). CopraRNA, which
+  needs several related genomes, is a later option.
+- **FDR**: decoys from the same `decoys` step (any decoy mode), scored identically. The unit is
+  the best interaction of a window, not a seed match: q-values from the weighted target-decoy
+  estimate of `fdr.qvalues` (decoy weights 1 / decoys of the candidate, one pseudo decoy), pooled
+  over candidates (`intarna_q`) and per candidate (`intarna_q_cand`). No `support` count.
 - **Caveat**: a small RNA library under ~40 nt sees fragments of bacterial sRNAs that are
-  50–500 nt long. The query is the representative read by default. With `query: locus`,
-  the whole locus span (or a user-supplied FASTA of full-length sRNAs) is used instead.
+  50-500 nt long. The query is the candidate sequence as given (the representative read by
+  default); full-length sRNAs can be supplied as the candidates FASTA. A `query: locus` option
+  (whole locus span as the query) is not implemented.
 
 ## 6. Precursor folding
 
