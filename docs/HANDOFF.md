@@ -164,3 +164,23 @@ calib_bacterial_rnai/truth/*.tsv                                       # PA14 sR
 "Resume SmithHunter2 module B. Read ~/THE_CAPTAIN/SmithHunter2/docs/HANDOFF.md first, then
 docs/module_b_development_log.md. Check the running jobs and agent deliveries in section 4, then
 follow section 5 in order. Follow the server rules in section 0 (write only inside THE_CAPTAIN)."
+
+## 8. Status update 2026-11-11 (later session; supersedes section 4/5 where they differ)
+
+- Git rule changed by the user: commit and push to branches without asking, never to `main`
+  (merge to main only when the user says so). Audit what goes out before every push: the remote
+  is public, no server address, login or personal paths in the tree.
+- Branches pushed to `die-lab/SmithHunter2`: `module-b-step2` (ceeb274, 50d05ac),
+  `module-b-step3` (+ deterministic decoys, test over 4 hash seeds), `module-b-merge`
+  (= step3 + speed patch + bactmode patch; 156 tests pass; local branch name `merge-speed`).
+- Section 5 step 0 done. Step 2 done for `speed` (batch == per-site on 1,027 real windows, full
+  dict equality) and `bactmode`. NOT done: `predictors` and `genelevel` (both agents died on the
+  usage limit; DELIVERY folders are empty, partial work in `.scratch_solve/agents/<id>/`).
+  `rnahybrid_batch` / `intarna_batch` are still not CLI/config keys.
+- Finished jobs: Wolbachia CDS (WsnRNA-46 -> Dhc `LOC5568788`: IntaRNA percentile 0.075, RNAhybrid
+  0.124, AUC 0.93 / 0.88, support 0, best q 0.64, one validated pair) and miRNA keep_seed (AUC
+  RNAhybrid 0.7908, IntaRNA 0.557 on the 15% prefiltered, still only 2 supported sites): the decoy
+  mode does not rescue site-level power, so finding 2 stands. Not yet written into the log (D6, section 3).
+- Tests need a SHORT `TMPDIR` (e.g. `~/THE_CAPTAIN/tt`), otherwise AF_UNIX forkserver paths are too long.
+- Next: step 1 write-up in the log, step 3 (verify discrepancies), re-run `predictors` and `genelevel`,
+  then step 4 (ask the user about CPU first).
