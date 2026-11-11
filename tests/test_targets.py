@@ -184,3 +184,22 @@ def test_read_candidates(tmp_path):
                  ">custom\nTTTTTTTTTTTTTTTTTTTT\n")
     assert read_candidates(path) == [("mito_00001", "mito", "ACGTACGTACGTACGTACGT"),
                                      ("custom", "", "T" * 20)]
+
+
+def test_make_decoys_identical_across_processes():
+    """Decoys must not depend on PYTHONHASHSEED (set iteration order)."""
+    import os
+    import subprocess
+    import sys
+    code = (
+        "from smithhunter.targets.shuffle import make_decoys;"
+        "c=[('a','UGAGGUAGUAGGUUGUAUAGUU'),('b','UAGCAGCACGUAAAUAUUGGCG')];"
+        "print(make_decoys(c,5,random_seed=3)); print(make_decoys(c,5,random_seed=3,mode='match_seed_gc'))"
+    )
+    outs = set()
+    for hs in ("0", "1", "12345", "999"):
+        env = dict(os.environ, PYTHONHASHSEED=hs)
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, [os.path.join(os.getcwd(), "src"), env.get("PYTHONPATH")]))
+        outs.add(subprocess.run([sys.executable, "-c", code], env=env, capture_output=True,
+                                text=True, check=True).stdout)
+    assert len(outs) == 1

@@ -21,7 +21,9 @@ def dinucleotide_shuffle(seq: str, rng: random.Random) -> str:
     for a, b in zip(seq, seq[1:]):
         edges[a].append(b)
     last = seq[-1]
-    vertices = set(edges) - {last}
+    # sorted: set iteration order of strings depends on PYTHONHASHSEED, which would make
+    # the decoys differ between processes for the same random_seed
+    vertices = sorted(set(edges) - {last})
     while True:
         last_edge = {v: rng.choice(edges[v]) for v in vertices}
         if all(_reaches(v, last, last_edge) for v in vertices):
