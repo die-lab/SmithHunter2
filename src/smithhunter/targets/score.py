@@ -30,6 +30,7 @@ import pickle
 import shutil
 import statistics
 import time
+from array import array
 from collections import Counter, defaultdict
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field, replace
@@ -66,6 +67,10 @@ class ScoreConfig:
     rnahybrid_bin: str = "RNAhybrid"
     rnacalibrate_bin: str = "RNAcalibrate"
     intarna_extra: list[str] = field(default_factory=list)
+    rnahybrid_batch: int = 2000     # sites per RNAhybrid process (0: one process per site)
+    intarna_batch: int = 50         # windows per IntaRNA process (0: one process per site);
+    # small RNAs that share a window are scored in one process too. Both give the same
+    # numbers as one process per site, so neither is part of the run signature.
 
 
 def scored_classes(classes, cfg: ScoreConfig):
@@ -144,6 +149,8 @@ def score_one(guide: str, target: str, site, xi_theta, cfg: ScoreConfig) -> dict
     return out
 
 
+_PER_SITE = score_one  # a replaced score_one (tests, experiments) keeps the per-site path
+
 # state shared with worker processes (inherited on fork)
 _STATE: dict = {}
 
@@ -152,14 +159,141 @@ def _init(state):
     _STATE.update(state)
 
 
-def _work(job):
+def _error(exc) -> dict:
+    return {"_error": f"{type(exc).__name__}: {exc}"[:200]}
+
+
+def _run_job(job):
+    """Result of one site (or ``{"_error": ...}``): one process per predictor and site."""
     gid, si, start, end, t1, cls = job
     site = Site(start, end, t1, cls)
     s = _STATE
     try:
-        return job, score_one(s["guides"][gid], s["unique"][si], site, s["xi"].get(gid), s["cfg"])
+        return score_one(s["guides"][gid], s["unique"][si], site, s["xi"].get(gid), s["cfg"])
     except Exception as exc:  # one bad window must not kill a run of hours
-        return job, {"_error": f"{type(exc).__name__}: {exc}"[:200]}
+        return _error(exc)
+
+
+def _work(job):
+    return job, _run_job(job)
+
+
+def plan_intarna_calls(jobs, idxs, state, cfg: ScoreConfig, size: int) -> list[list[int]]:
+    """Groups of job indices that one IntaRNA process can score (``intarna.score_pairs``):
+    - jobs on the SAME WINDOW (same region, window bounds and layout: the same t1, guide
+      length and seed range) from different small RNAs: one target, several queries, so the
+      target accessibility, which is most of the cost, is computed once;
+    - the rest, grouped by small RNA and layout (``--tRegion``/``--seedTRange`` are the same
+      for every target of a call) in calls of at most ``size`` windows. Windows of another
+      layout (sites near a region end) are never mixed in and never padded."""
+    unique, guides, flank = state["unique"], state["guides"], cfg.intarna_flank
+    by_window: dict[tuple, list[int]] = {}
+    for i in idxs:
+        gid, si, start, end, t1, cls = jobs[i]
+        lo, hi, treg, seedt = intarna.window_coords(len(unique[si]), Site(start, end, t1, cls),
+                                                    len(guides[gid]), flank)
+        by_window.setdefault((si, lo, hi, treg, seedt, intarna.seed_range(cls)), []).append(i)
+    calls: list[list[int]] = []
+    singles: dict[tuple, list[int]] = {}
+    for key, ii in by_window.items():
+        if len(ii) > 1:
+            calls += [ii[k:k + 100] for k in range(0, len(ii), 100)]
+        else:
+            singles.setdefault((jobs[ii[0]][0],) + key[3:], []).append(ii[0])
+    for ii in singles.values():
+        calls += [ii[k:k + size] for k in range(0, len(ii), size)]
+    return calls
+
+
+def _intarna_call(jobs) -> list:
+    """Results (dict, or an Exception for a site that could not be scored) of jobs that share
+    a window or a small RNA and a layout, in ONE IntaRNA process."""
+    s = _STATE
+    cfg, guides, unique = s["cfg"], s["guides"], s["unique"]
+    geo = [intarna.window_coords(len(unique[j[1]]), Site(j[2], j[3], j[4], j[5]),
+                                 len(guides[j[0]]), cfg.intarna_flank) for j in jobs]
+    layouts = {(g[2], g[3], intarna.seed_range(j[5])) for g, j in zip(geo, jobs)}
+    if len(layouts) != 1:  # cannot happen when the calls come from plan_intarna_calls
+        out = []
+        for j in jobs:
+            try:
+                out.append(intarna.score_site(guides[j[0]], unique[j[1]], Site(*j[2:5], j[5]),
+                                              cfg.intarna_flank, cfg.temperature, cfg.intarna_bin,
+                                              cfg.intarna_extra, cfg.timeout) or {})
+            except Exception as exc:  # noqa: BLE001
+                out.append(exc)
+        return out
+    windex: dict[tuple, int] = {}
+    qindex: dict[str, int] = {}
+    for j, g in zip(jobs, geo):
+        windex.setdefault((j[1], g[0], g[1]), len(windex))
+        qindex.setdefault(j[0], len(qindex))
+    windows = [unique[si][lo:hi] for si, lo, hi in windex]
+    pairs = intarna.score_pairs([guides[g] for g in qindex], windows, jobs[0][5], geo[0][2],
+                                geo[0][3], cfg.temperature, cfg.intarna_bin, cfg.intarna_extra,
+                                cfg.timeout, s.get("tmpdir"))
+    out = []
+    for j, g in zip(jobs, geo):
+        r = pairs[(windex[(j[1], g[0], g[1])], qindex[j[0]])]
+        if r is None:
+            r = {}
+        elif not isinstance(r, Exception):  # region coordinates (1-based), as score_site
+            r["intarna_t_start"] += g[0]
+            r["intarna_t_end"] += g[0]
+        out.append(r)
+    return out
+
+
+def _work_intarna(task):
+    """A task is a list of calls (lists of jobs); the result is a list of lists of result
+    dicts, aligned."""
+    return [[_error(r) if isinstance(r, Exception) else r for r in _intarna_call(call)]
+            for call in task]
+
+
+def _work_batch(jobs):
+    """Results, aligned with ``jobs``, of a chunk of sites that share the small RNA and the
+    seed range. IntaRNA is still one process per site; RNAhybrid scores the whole chunk in one
+    process (``rnahybrid.score_sites``). A site that fails in either predictor gets
+    ``{"_error": ...}`` and nothing else, as in the per-site path."""
+    s = _STATE
+    cfg = s["cfg"]
+    gid = jobs[0][0]
+    guide = s["guides"][gid]
+    sites = [Site(j[2], j[3], j[4], j[5]) for j in jobs]
+    targets = [s["unique"][j[1]] for j in jobs]
+    out: list = [{} for _ in jobs]
+    failed: list = [None] * len(jobs)
+    if "intarna" in cfg.predictors and cfg.intarna_batch > 0:
+        for call in plan_intarna_calls(jobs, range(len(jobs)), s, cfg, cfg.intarna_batch):
+            for i, r in zip(call, _intarna_call([jobs[i] for i in call])):
+                if isinstance(r, Exception):
+                    failed[i] = r
+                else:
+                    out[i].update(r)
+    elif "intarna" in cfg.predictors:
+        for i, (target, site) in enumerate(zip(targets, sites)):
+            try:
+                out[i].update(intarna.score_site(guide, target, site, cfg.intarna_flank,
+                                                 cfg.temperature, cfg.intarna_bin,
+                                                 cfg.intarna_extra, cfg.timeout) or {})
+            except Exception as exc:  # noqa: BLE001
+                failed[i] = exc
+    if "rnahybrid" in cfg.predictors:
+        live = [i for i in range(len(jobs)) if failed[i] is None]
+        try:
+            res = rnahybrid.score_sites(
+                guide, [(targets[i], sites[i]) for i in live], s["xi"].get(gid),
+                cfg.rnahybrid_flank, cfg.rnahybrid_bin, cfg.rnahybrid_require_site,
+                cfg.timeout, tmpdir=s.get("tmpdir"))
+        except Exception as exc:  # noqa: BLE001  (e.g. no space for the temporary FASTA)
+            res = [exc] * len(live)
+        for i, r in zip(live, res):
+            if isinstance(r, Exception):
+                failed[i] = r
+            else:
+                out[i].update(r or {})
+    return [_error(failed[i]) if failed[i] is not None else out[i] for i in range(len(jobs))]
 
 
 def _calibrate_work(gid):
@@ -189,41 +323,132 @@ def prefilter_cutoffs(scores, share: float) -> dict[str, float]:
     return out
 
 
-def parallel_map(fn, items, cfg, state, chunksize=16, log=None, label=""):
-    """``map`` over worker processes; logs progress and an ETA about every 5% when ``log``
-    is given and there is a lot to do."""
-    items = list(items)
-    n = len(items)
+def parallel_map(fn, items, cfg, state, chunksize=None, log=None, label="", sizes=None):
+    """``map`` over worker processes, results in the order of ``items``; logs progress and an
+    ETA about every 5% when ``log`` is given and there is a lot to do. ``sizes`` (the number of
+    sites in each item, for items that are chunks of sites) makes the progress count sites.
+    ``chunksize`` is how many items travel to a worker together (default: 1/20 of a worker's
+    share, at most 64: big enough to cut the overhead, small enough to balance the load)."""
+    items = items if isinstance(items, list) else list(items)
+    n = sum(sizes) if sizes is not None else len(items)
     step = max(1, n // 20) if log and n >= 2000 else 0
     t0 = time.time()
     out = []
+    progress = {"done": 0, "next": step}
 
-    def tick(i):
-        if step and i % step == 0 and i < n:
-            rate = i / (time.time() - t0)
-            log(f"{label}{i}/{n} ({i / n:.0%}), ETA {(n - i) / rate / 60:.0f} min")
+    def tick(k):
+        progress["done"] += k
+        done = progress["done"]
+        if step and done >= progress["next"] and done < n:
+            rate = done / (time.time() - t0)
+            log(f"{label}{done}/{n} ({done / n:.0%}), ETA {(n - done) / rate / 60:.0f} min")
+            progress["next"] = done - done % step + step
 
     if cfg.workers <= 1:
         _init(state)
-        for i, item in enumerate(items, 1):
+        for i, item in enumerate(items):
             out.append(fn(item))
-            tick(i)
+            tick(sizes[i] if sizes is not None else 1)
         return out
+    if chunksize is None:
+        chunksize = max(1, min(64, len(items) // (cfg.workers * 20)))
     with ProcessPoolExecutor(cfg.workers, initializer=_init, initargs=(state,)) as ex:
-        for i, res in enumerate(ex.map(fn, items, chunksize=chunksize), 1):
+        for i, res in enumerate(ex.map(fn, items, chunksize=chunksize)):
             out.append(res)
-            tick(i)
+            tick(sizes[i] if sizes is not None else 1)
     return out
 
 
-def plan_jobs(guides: dict[str, str], unique: list[str], seed, classes):
-    """All scorable sites: (guide id, sequence index, start, end, t1, class)."""
+def _plan_work(gid):
+    """Sites of one small RNA in every sequence, flat: (sequence index, start, end, t1, class
+    index) per site, as an array (a compact message instead of a list of tuples)."""
+    s = _STATE
+    guide, classes = s["guides"][gid], s["classes"]
+    cls_index = {c: k for k, c in enumerate(classes)}
+    flat = array("l")
+    for si, seq in enumerate(s["unique"]):
+        for site in scan(guide, seq, s["seed"], classes):
+            flat.extend((si, site.start, site.end, site.t1, cls_index[site.site_class]))
+    return flat
+
+
+def plan_jobs(guides: dict[str, str], unique: list[str], seed, classes, cfg=None):
+    """All scorable sites: (guide id, sequence index, start, end, t1, class). The scan runs in
+    ``cfg.workers`` processes (one task per small RNA; with 800+ small RNAs and 40,000
+    sequences it is minutes in a single process). The tuples share their integer objects
+    (about 8 M sites are held in memory, and again as the keys of the scores)."""
+    classes = tuple(classes)
+    state = {"guides": guides, "unique": unique, "seed": seed, "classes": classes}
+    workers = min(cfg.workers, len(guides)) if cfg else 1
+    pool_cfg = replace(cfg, workers=workers) if cfg else ScoreConfig(workers=1)
+    gids = list(guides)
+    ints = list(range(max(max(map(len, unique), default=0), len(unique)) + 2))
     jobs = []
-    for gid, guide in guides.items():
-        for si, seq in enumerate(unique):
-            for site in scan(guide, seq, seed, classes):
-                jobs.append((gid, si, site.start, site.end, site.t1, site.site_class))
+    for gid, flat in zip(gids, parallel_map(_plan_work, gids, pool_cfg, state, chunksize=1)):
+        for k in range(0, len(flat), 5):
+            si, start, end, t1, c = flat[k:k + 5]
+            jobs.append((gid, ints[si], ints[start], ints[end], ints[t1], classes[c]))
     return jobs
+
+
+def _chunks(jobs, size: int):
+    """Indices into ``jobs`` in chunks of at most ``size`` sites that share the small RNA and
+    the seed range (the helix constraint), in order of first appearance."""
+    groups: dict[tuple, array] = {}
+    seed_of: dict[str, tuple] = {}
+    for i, job in enumerate(jobs):
+        cls = job[5]
+        if cls not in seed_of:
+            seed_of[cls] = intarna.seed_range(cls)
+        groups.setdefault((job[0], seed_of[cls]), array("l")).append(i)
+    return [idx[k:k + size] for idx in groups.values() for k in range(0, len(idx), size)]
+
+
+def score_jobs(jobs, cfg: ScoreConfig, state, log=None, label="") -> list:
+    """Result dict of every job, in the order of ``jobs``. Batch paths (same numbers as one
+    process per site, much cheaper):
+    - RNAhybrid: chunks of ``cfg.rnahybrid_batch`` sites of one small RNA and seed range, one
+      process per chunk;
+    - IntaRNA alone (the second stage of the two-stage mode): calls planned by
+      ``plan_intarna_calls`` (shared windows, windows of one layout), ``cfg.intarna_batch``
+      windows per process;
+    - both in one pass: RNAhybrid chunks of at most 50 sites, IntaRNA batched inside the chunk.
+    A replaced ``score_one`` (tests) or a batch size of 0 keeps the per-site path."""
+    ia, rh = "intarna" in cfg.predictors, "rnahybrid" in cfg.predictors
+    if score_one is not _PER_SITE or (ia and cfg.intarna_batch <= 0) or (
+            rh and cfg.rnahybrid_batch <= 0):
+        return parallel_map(_run_job, jobs, cfg, state, log=log, label=label)
+    results: list = [None] * len(jobs)
+    if not rh:
+        calls = plan_intarna_calls(jobs, range(len(jobs)), state, cfg, cfg.intarna_batch)
+        tasks, cur, n = [], [], 0
+        for call in calls:   # ~40 sites per message
+            cur.append(call)
+            n += len(call)
+            if n >= 40:
+                tasks.append(cur)
+                cur, n = [], 0
+        if cur:
+            tasks.append(cur)
+        done = parallel_map(_work_intarna, [[[jobs[i] for i in call] for call in t] for t in tasks],
+                            cfg, state, chunksize=1, log=log, label=label,
+                            sizes=[sum(map(len, t)) for t in tasks])
+        for task, res in zip(tasks, done):
+            for call, rr in zip(task, res):
+                for i, r in zip(call, rr):
+                    results[i] = r
+        return results
+    # a chunk with IntaRNA inside is dominated by its IntaRNA calls: keep it small so the
+    # progress and the end of the run stay balanced
+    size = min(cfg.rnahybrid_batch, 50) if "intarna" in cfg.predictors else cfg.rnahybrid_batch
+    chunks = _chunks(jobs, size)
+    tasks = [[jobs[i] for i in idx] for idx in chunks]
+    done = parallel_map(_work_batch, tasks, cfg, state, chunksize=1, log=log, label=label,
+                        sizes=[len(idx) for idx in chunks])
+    for idx, res in zip(chunks, done):
+        for i, r in zip(idx, res):
+            results[i] = r
+    return results
 
 
 def dry_run_summary(jobs, cfg: ScoreConfig) -> str:
@@ -231,8 +456,21 @@ def dry_run_summary(jobs, cfg: ScoreConfig) -> str:
     n = len(jobs) * len(cfg.predictors)
     lines = [f"{len(jobs)} sites to score ({n} predictor runs):"]
     lines += [f"  {c}: {k}" for c, k in sorted(per_class.items())]
-    est = n * 0.05 / max(1, cfg.workers)
-    lines.append(f"rough time at 0.05 s per run on {cfg.workers} worker(s): {est / 3600:.1f} h")
+    # measured on the shared server: RNAhybrid 0.01 s per process, ~0.0005 s per site in a batch;
+    # IntaRNA ~0.1 s per window (target accessibility), ~0.09 s when batched, much less when
+    # small RNAs share windows (keep_seed decoys); only the best share goes to IntaRNA in
+    # two-stage mode
+    per_rh = 0.0005 if cfg.rnahybrid_batch > 0 else 0.01
+    per_ia = 0.09 if cfg.intarna_batch > 0 else 0.1
+    two_stage = cfg.intarna_prefilter < 1.0 and len(cfg.predictors) == 2
+    est = 0.0
+    if "rnahybrid" in cfg.predictors:
+        est += len(jobs) * per_rh
+    if "intarna" in cfg.predictors:
+        est += len(jobs) * (cfg.intarna_prefilter if two_stage else 1.0) * per_ia
+    est /= max(1, cfg.workers)
+    lines.append(f"rough time on {cfg.workers} worker(s): {est / 3600:.1f} h (RNAhybrid "
+                 f"{per_rh} s/site, IntaRNA {per_ia} s/site; less if small RNAs share windows)")
     return "\n".join(lines)
 
 
@@ -282,13 +520,15 @@ def run_scoring(candidates, decoys, regions: list[Region], seed=(2, 8), classes=
         log(f"WARNING: {len(without)} candidate(s) have no decoys and get no q-values "
             f"(e.g. {without[0]}); rerun the decoys step after editing the candidate list")
 
-    jobs = plan_jobs(guides, unique, seed, classes)
+    jobs = plan_jobs(guides, unique, seed, classes, cfg)
     log(dry_run_summary(jobs, cfg))
     if dry_run:
         return None
     check_tools(cfg)
+    os.makedirs(workdir, exist_ok=True)
 
-    state = {"guides": guides, "unique": unique, "xi": {}, "cfg": cfg, "seed": seed}
+    state = {"guides": guides, "unique": unique, "xi": {}, "cfg": cfg, "seed": seed,
+             "tmpdir": workdir}
     if "rnahybrid" in cfg.predictors and cfg.calibrate_samples > 0:
         os.makedirs(workdir, exist_ok=True)
         lens = [len(s) for s in unique] or [100]
@@ -325,9 +565,8 @@ def run_scoring(candidates, decoys, regions: list[Region], seed=(2, 8), classes=
             if scores is not None:
                 log(f"resumed the RNAhybrid scores of {len(scores)} sites from {ck_stage1}")
             else:
-                scores = {job: res for job, res in
-                          parallel_map(_work, jobs, s1, {**state, "cfg": s1}, log=log,
-                                       label="RNAhybrid ")}
+                scores = dict(zip(jobs, score_jobs(jobs, s1, {**state, "cfg": s1}, log,
+                                                   "RNAhybrid ")))
                 save_checkpoint(ck_stage1, sig_stage1, scores)
             cutoff = prefilter_cutoffs(scores, cfg.intarna_prefilter)
             keep = [j for j in jobs if scores[j].get("rnahybrid_mfe") is not None
@@ -336,12 +575,11 @@ def run_scoring(candidates, decoys, regions: list[Region], seed=(2, 8), classes=
                 f"{len(keep)} pass the prefilter (best {cfg.intarna_prefilter:.0%} per class, "
                 f"cutoffs {', '.join(f'{c} {v:.1f}' for c, v in sorted(cutoff.items()))})")
             s2 = replace(cfg, predictors=("intarna",))
-            for job, res in parallel_map(_work, keep, s2, {**state, "cfg": s2}, log=log,
-                                         label="IntaRNA "):
+            for job, res in zip(keep, score_jobs(keep, s2, {**state, "cfg": s2}, log,
+                                                 "IntaRNA ")):
                 scores[job].update(res)
         else:
-            scores = {job: res for job, res in
-                      parallel_map(_work, jobs, cfg, state, log=log, label="sites ")}
+            scores = dict(zip(jobs, score_jobs(jobs, cfg, state, log, "sites ")))
         log(f"scored {len(jobs)} sites in {time.time() - t0:.0f} s")
         summarise_errors(scores, log, cfg.max_error_share)
         save_checkpoint(ck_final, sig_final, scores)

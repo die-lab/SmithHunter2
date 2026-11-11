@@ -333,6 +333,16 @@ decoys**, with the same code and settings:
   best share of each class by MFE. The cutoff is one pooled threshold per class over real and
   decoy sites, so both meet the same rule and the q-values remain valid (conditional on passing
   it); sites below the cutoff have RNAhybrid values only. Default 1.0 (off).
+- **Batched tools** (same numbers as one process per site, checked site by site in the tests).
+  RNAhybrid scores up to `rnahybrid_batch` (2000) windows of one small RNA and seed range in one
+  process (a multi-FASTA; a failing chunk is halved and retried, then scored site by site), which
+  is ~25x faster per site than one process per site because the start-up dominated. IntaRNA is
+  dominated by the accessibility of the 235 nt target window (~90% of ~0.1 s), so batching
+  windows only saves the start-up (~10%); but small RNAs that share a window (same region, t1,
+  length and seed range, e.g. a candidate and its `keep_seed` decoys) are scored against it in
+  one IntaRNA process, which computes the target accessibility once (up to `intarna_batch`
+  windows per process; 7x on a keep_seed test). `ScoreConfig.rnahybrid_batch` and
+  `intarna_batch` set the sizes (0 restores one process per site); they are not in the CLI/config.
 - 6mer and offset-6mer sites are only listed (`sites.tsv`); scoring them is opt-in
   (`score_weak_sites: true`) because they are ten times more frequent.
 
