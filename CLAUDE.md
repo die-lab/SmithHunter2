@@ -187,6 +187,36 @@ nuclear genome even when it fit the focus genome better.
 - Rule for this server: never write outside THE_CAPTAIN, also not to /tmp (pytest: use
   `--basetemp` inside THE_CAPTAIN; conda: `CONDA_PKGS_DIRS` inside THE_CAPTAIN; `pkill -f` can
   kill your own ssh shell: kill by pid after checking `/proc/<pid>/cwd`).
+## Literature review and module B revision (2026-11-13)
+
+`docs/module_b_revision_2026-11.md` revises `docs/module_b_design.md` after a three-strand
+literature review (`docs/research/A_mechanisms.md`, `B_validated_pairs.md`,
+`C_tools_benchmarks.md`, ~220 references). Read the revision before implementing module B
+step 2. The findings that matter:
+
+- The site-count FDR of ~1 is the **correct measurement**, not a gap to engineer around.
+  Qin 2023: ~10^6 plant sRNAs could target 97% of all fungal genes by complementarity.
+  Published cross-kingdom target lists never computed a null; ours does. That is the
+  contribution, and it belongs in the headline rather than the caveats.
+- **No benchmark set exists and no ROC is possible.** 49 named validated pairs in the whole
+  literature, 4 at grade A, and every A/B pair was found by running psRNATarget/TAPIR/miRanda
+  and validating top hits: the positive set is the output of the tool class being tested.
+  Use median rank of the true target on simulated data, and q-value calibration, instead.
+- **No bacterial sRNA has ever been shown by AGO-IP or CLIP to enter a host Argonaute.**
+  `ago` mode on a bacterial endosymbiont is an extrapolation from eukaryote-to-eukaryote
+  systems and the output must say so. Realistic prior for a sequence-only bacteria->animal
+  prediction: <=1%.
+- Agreed changes: 3'UTR + CDS (reverses decision 3); three modes (`ago_animal`, `ago_plant`,
+  `bacterial`); two nulls with 500 (or 200) decoys, stratified by class x length decile x GC
+  quartile; A1 anchor as a flag not a class requirement; TargetScan context features dropped
+  (`supp_bp_13_16` reported but unweighted); contamination / tRF-innate-sensing /
+  host-miRNA-confounder flags.
+- Tuned IntaRNA parameters (Raden 2020) and the RNAhybrid `-n` trap are in sections 4.1-4.2
+  of the revision. `-n` defaults to 30 and **queries longer than 30 nt fail silently** --
+  this will bite bacterial mode, where the query is a full-length sRNA.
+- Comparative genomics (what makes CopraRNA best in class) is unavailable with one bacterial
+  genome per library. Note that many *Wolbachia* genomes buy **sRNA-locus conservation**, not
+  target conservation: target conservation needs many *hosts*, i.e. the sRNA atlas.
 
 ## Next steps
 
