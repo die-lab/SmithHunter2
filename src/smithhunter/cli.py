@@ -54,7 +54,8 @@ def cmd_assign(args):
         org.write("read_id\tclass\tgenomes\n")
         for rid, cls, genomes, placed in assign(args.sam, excess, list(table), contigs, roles,
                                                 args.ambiguous, args.multimap, args.mode,
-                                                args.evil_max_diff, args.max_hits):
+                                                args.evil_max_diff, args.max_hits,
+                                                args.max_mismatches):
             label = "+".join(genomes)
             org.write(f"{rid}\t{cls}\t{label}\n")
             for genome, hit, weight in placed:
@@ -245,6 +246,9 @@ def main(argv=None):
     s.add_argument("--max-hits", type=int, default=None,
                    help="reads with more best alignments are too_many_hits (needed when "
                         "bowtie does not apply -m, i.e. evil mode)")
+    s.add_argument("--max-mismatches", type=int, default=None,
+                   help="alignments with more mismatches only serve the evil comparison "
+                        "(bowtie searches evil_max_diff mismatches deeper in evil mode)")
     s.add_argument("--alignments", required=True)
     s.add_argument("--origin", required=True)
     s.add_argument("--summary", required=True)
@@ -300,6 +304,10 @@ def main(argv=None):
     s.add_argument("--error-rate", type=float, default=0.002)
     s.add_argument("--max-hits", type=int, default=50)
     s.add_argument("--ambiguous", default="report")
+    s.add_argument("--mode", default="best", choices=["best", "severe", "evil"],
+                   help="assignment.mode written to the config (genome choice)")
+    s.add_argument("--evil-max-diff", type=int, default=1, choices=[0, 1],
+                   help="assignment.evil_max_diff written to the config (used by --mode evil)")
     s.set_defaults(func=cmd_simulate)
 
     s = sub.add_parser("evaluate", help="compare results of a simulated run with its truth")

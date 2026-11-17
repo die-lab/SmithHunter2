@@ -129,3 +129,106 @@ def test_max_hits_sets_aside_reads_with_too_many_best_alignments():
     hits = [hm("mt|chrM", s, 0) for s in (0, 10, 20)]
     cls, _, placed = classify(hits, CONTIGS, ROLES, "report", "fractional", max_hits=2)
     assert cls == "too_many_hits" and placed == []
+
+
+# --- evil with probe alignments (bowtie searches evil_max_diff mismatches deeper) -------------
+
+def evil(hits, diff=1, max_mismatches=1, **kw):
+    return classify(hits, CONTIGS, ROLES, "report", "fractional", mode="evil",
+                    evil_max_diff=diff, max_mismatches=max_mismatches, **kw)
+
+
+def test_evil_rejects_a_read_with_one_focus_mismatch_and_two_on_the_exclude_genome():
+    # a sequencing error or a non-templated tail on a read of a 1-mismatch NUMT: bowtie -v 1
+    # never showed the nuclear alignment and the read was kept
+    cls, genomes, placed = evil([hm("mt|chrM", 0, 1), hm("nuc|chr1", 5, 2)])
+    assert (cls, genomes, placed) == ("evil_rejected", ["mt", "nuc"], [])
+    # two mismatches worse than the focus genome: beyond the tolerance, kept
+    cls, _, placed = evil([hm("mt|chrM", 0, 0), hm("nuc|chr1", 5, 2)])
+    assert cls == "assigned" and len(placed) == 1
+
+
+def test_probe_alignments_never_place_or_exclude_a_read():
+    # only alignments beyond mapping.mismatches: unmapped, as in the other modes
+    assert evil([hm("mt|chrM", 0, 2)]) == ("unmapped", [], [])
+    assert evil([hm("nuc|chr1", 5, 2)]) == ("unmapped", [], [])
+    assert evil([hm("mt|chrM", 0, 2), hm("nuc|chr1", 5, 2)]) == ("unmapped", [], [])
+    # a probe alignment on the focus genome does not rescue a read of the exclude genome
+    assert evil([hm("mt|chrM", 0, 2), hm("nuc|chr1", 5, 1)]) == ("excluded", ["nuc"], [])
+    # nor does it take part in a tie or get a share of the read
+    cls, genomes, placed = evil([hm("mt|chrM", 0, 1), hm("mt|chrM", 50, 2)])
+    assert cls == "assigned" and [(x.start, w) for _, x, w in placed] == [(0, 1.0)]
+
+
+def test_max_mismatches_does_not_change_best_and_severe():
+    hits = [hm("mt|chrM", 0, 1), hm("nuc|chr1", 5, 2)]
+    for mode in ("best", "severe"):
+        cls, genomes, placed = classify(hits, CONTIGS, ROLES, "report", "fractional", mode=mode,
+                                        max_mismatches=1)
+        assert cls == "assigned" and genomes == ["mt"] and len(placed) == 1
+
+
+def test_classify_does_not_depend_on_the_order_of_the_hits():
+    import itertools
+    hits = [hm("mt|chrM", 0, 0), hm("mt|chrM", 50, 1), hm("nuc|chr1", 5, 1),
+            hm("nuc|chr1", 300, 2)]
+    results = {str(evil(list(p))) for p in itertools.permutations(hits)}
+    assert len(results) == 1 and "evil_rejected" in results.pop()
+
+
+def test_evil_rejected_names_the_genomes_that_caused_it():
+    roles = {"mt": "focus", "nuc": "exclude", "bac": "exclude"}
+    # the bacterium fits two mismatches worse: it is not a reason for the rejection
+    cls, genomes, _ = classify([hm("mt|chrM", 0, 0), hm("nuc|chr1", 5, 1), hm("bac|chr", 9, 2)],
+                               CONTIGS, roles, "report", "fractional", mode="evil",
+                               evil_max_diff=1, max_mismatches=1)
+    assert (cls, genomes) == ("evil_rejected", ["mt", "nuc"])
+
+
+def test_evil_keeps_the_tie_and_exclude_rules_of_severe_with_probe_alignments():
+    # tie at the best stratum: ambiguous, whatever lies deeper
+    cls, genomes, placed = evil([hm("mt|chrM", 0, 1), hm("nuc|chr1", 5, 1),
+                                 hm("nuc|chr1", 300, 2)])
+    assert (cls, genomes, placed) == ("ambiguous", ["mt", "nuc"], [])
+    # tolerance 0 is severe, also with deeper alignments in the SAM
+    cls, _, placed = evil([hm("mt|chrM", 0, 0), hm("nuc|chr1", 5, 1)], diff=0)
+    assert cls == "assigned" and len(placed) == 1
+
+
+def test_too_many_hits_counts_only_the_best_stratum_and_reports_no_genomes():
+    hits = [hm("mt|chrM", 0, 0)] + [hm("nuc|chr1", s, 1) for s in (100, 200, 300)]
+    # one best alignment, three worse ones: not too many
+    cls, _, _ = classify(hits, CONTIGS, ROLES, "report", "fractional", mode="evil",
+                         evil_max_diff=0, max_hits=2, max_mismatches=1)
+    assert cls == "assigned"
+    # as for the reads bowtie sets aside with -m in the other modes, no genome is listed
+    hits = [hm("nuc|chr1", s, 0) for s in (100, 200, 300)]
+    assert evil(hits, max_hits=2) == ("too_many_hits", [], [])
+
+
+def test_ties_between_two_focus_genomes_current_behaviour():
+    # CURRENT behaviour, not a decision: whether severe / evil should discard a tie between
+    # two focus genomes is an open question for the maintainer (see CLAUDE.md)
+    roles = {"mt": "focus", "nuc": "exclude", "bac": "focus"}
+    hits = [hm("mt|chrM", 0, 0), hm("bac|chr", 9, 0)]
+    cls, genomes, placed = classify(hits, CONTIGS, roles, "split", "fractional")
+    assert cls == "ambiguous" and [(g, w) for g, _, w in placed] == [("bac", 0.5), ("mt", 0.5)]
+    for mode in ("severe", "evil"):
+        cls, genomes, placed = classify(hits, CONTIGS, roles, "split", "fractional", mode=mode,
+                                        evil_max_diff=1)
+        assert (cls, genomes, placed) == ("ambiguous", ["bac", "mt"], [])
+
+
+def test_assign_reads_sam_with_probe_alignments(tmp_path):
+    from smithhunter.assign import assign
+    lines = [sam("kept", 0, "mt|chrM", 1), sam("kept", 0, "nuc|chr1", 1, nm=2),
+             sam("leak", 0, "mt|chrM", 1, nm=1), sam("leak", 0, "nuc|chr1", 1, nm=2),
+             sam("deep", 0, "mt|chrM", 1, nm=2), sam("none", 4, "*", 0)]
+    path = tmp_path / "hits.sam"
+    path.write_text("".join(lines))
+    roles = {"mt": "focus", "nuc": "exclude", "bac": "exclude"}
+    got = {rid: cls for rid, cls, _, _ in assign(
+        str(path), set(), ["kept", "leak", "deep", "none"], CONTIGS, roles, "report",
+        "fractional", mode="evil", evil_max_diff=1, max_hits=50, max_mismatches=1)}
+    assert got == {"kept": "assigned", "leak": "evil_rejected", "deep": "unmapped",
+                   "none": "unmapped"}
