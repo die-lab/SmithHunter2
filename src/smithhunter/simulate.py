@@ -661,6 +661,12 @@ targets:
   candidates: results/discovery/candidates.fasta
   seed: [2, 8]
   decoys: 20
+
+# Precursor folding: snakemake -s <SmithHunter2>/workflow/Snakefile --cores 2 precursors
+precursors:
+  flanks: [15, 50]            # [short, long] bases around the candidate
+  temperature: 25             # required, no default (Celsius)
+  shuffles: 1000              # dinucleotide shuffles per window for the p-value
 """)
 
 
