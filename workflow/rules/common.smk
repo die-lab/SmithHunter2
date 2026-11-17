@@ -20,6 +20,15 @@ if MODE not in ("best", "severe", "evil"):
 if MODE == "evil" and not 0 <= EVIL_MAX_DIFF <= int(MAPPING.get("mismatches", 1)):
     raise ValueError("config: assignment.evil_max_diff must be between 0 and mapping.mismatches "
                      "(bowtie -v), otherwise the worse alignments are never reported")
+MISMATCHES = int(MAPPING.get("mismatches", 1))
+# evil compares the focus genome with exclude alignments up to evil_max_diff mismatches worse,
+# so bowtie has to search that much deeper than mapping.mismatches (bowtie -v stops at 3)
+EVIL_V = min(3, MISMATCHES + EVIL_MAX_DIFF)
+if MODE == "evil" and MISMATCHES + EVIL_MAX_DIFF > 3:
+    print(f"config: mapping.mismatches + assignment.evil_max_diff = {MISMATCHES + EVIL_MAX_DIFF} "
+          "but bowtie -v stops at 3: reads with more than "
+          f"{3 - EVIL_MAX_DIFF} mismatches on the focus genome are not fully tested by evil",
+          file=sys.stderr)
 ENDS = config.get("ends", {})
 THREADS = int(config.get("threads", 8))
 GENOMES = config["genomes"]

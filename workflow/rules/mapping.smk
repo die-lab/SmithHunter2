@@ -36,6 +36,10 @@ rule bowtie_index:
 # assignment.mode evil needs the worse strata too (a read with 0 mm on the focus genome and 1 mm on
 # the nuclear genome must be seen): --strata and -m are dropped, up to max_hits + 1 alignments are
 # reported best first, and `assign --max-hits` sets aside reads with too many best alignments.
+# evil also searches evil_max_diff mismatches deeper (EVIL_V): a read with 1 mismatch on the focus
+# genome (sequencing error, non-templated tail, SNP) fits the same exclude copy with 2, which
+# -v 1 never reports; such reads escaped the filter and rebuilt the locus that evil had removed.
+# `assign --max-mismatches` keeps the deeper alignments out of everything but that comparison.
 rule align:
     input:
         reads=OUT / "collapsed/unique.fa",
@@ -44,7 +48,7 @@ rule align:
         sam=OUT / "mapping/hits.sam.gz",
         excess=OUT / "mapping/too_many_hits.fa",
     params:
-        mismatches=MAPPING.get("mismatches", 1),
+        mismatches=EVIL_V if MODE == "evil" else MISMATCHES,
         max_hits=MAPPING.get("max_hits", 50),
         report=(f"--best -k {int(MAPPING.get('max_hits', 50)) + 1}" if MODE == "evil" else
                 f"--best --strata -k {MAPPING.get('max_hits', 50)} -m {MAPPING.get('max_hits', 50)} "
@@ -79,6 +83,7 @@ rule assign_origin:
         mode=MODE,
         evil_max_diff=EVIL_MAX_DIFF,
         max_hits=MAPPING.get("max_hits", 50),
+        max_mismatches=MISMATCHES,
     log:
         OUT / "logs/assign_origin.log",
     conda:
@@ -87,5 +92,5 @@ rule assign_origin:
         "{SH} assign --sam {input.sam} --excess {input.excess} --counts {input.counts} "
         "--genomes {input.genomes} --contigs {input.contigs} --ambiguous {params.ambiguous} "
         "--multimap {params.multimap} --mode {params.mode} --evil-max-diff {params.evil_max_diff} "
-        "--max-hits {params.max_hits} --alignments {output.alignments} --origin {output.origin} "
+        "--max-hits {params.max_hits} --max-mismatches {params.max_mismatches} --alignments {output.alignments} --origin {output.origin} "
         "--summary {output.summary} --lengths {output.lengths} > {log} 2>&1"

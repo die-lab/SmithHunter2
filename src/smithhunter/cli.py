@@ -54,7 +54,8 @@ def cmd_assign(args):
         org.write("read_id\tclass\tgenomes\n")
         for rid, cls, genomes, placed in assign(args.sam, excess, list(table), contigs, roles,
                                                 args.ambiguous, args.multimap, args.mode,
-                                                args.evil_max_diff, args.max_hits):
+                                                args.evil_max_diff, args.max_hits,
+                                                args.max_mismatches):
             label = "+".join(genomes)
             org.write(f"{rid}\t{cls}\t{label}\n")
             for genome, hit, weight in placed:
@@ -221,6 +222,9 @@ def main(argv=None):
     s.add_argument("--max-hits", type=int, default=None,
                    help="reads with more best alignments are too_many_hits (needed when "
                         "bowtie does not apply -m, i.e. evil mode)")
+    s.add_argument("--max-mismatches", type=int, default=None,
+                   help="alignments with more mismatches only serve the evil comparison "
+                        "(bowtie searches evil_max_diff mismatches deeper in evil mode)")
     s.add_argument("--alignments", required=True)
     s.add_argument("--origin", required=True)
     s.add_argument("--summary", required=True)
