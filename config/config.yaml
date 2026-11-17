@@ -105,3 +105,14 @@ targets:
   candidates: results/discovery/candidates.fasta   # edit a copy to review candidates
   seed: [2, 8]                                     # guide positions; v0 used [4, 10]
   decoys: 20                                       # dinucleotide-shuffled decoys each
+
+# ---------------------------------------------------------------------------------------
+# Module B (precursor folding): snakemake -s workflow/Snakefile --cores 8 precursors
+# Two windows around each candidate are folded with RNAfold, so that the candidate can be
+# in either arm of a hairpin: [start - long, end + short] and [start - short, end + long]
+# on the candidate strand. Output: results/precursors/precursors.tsv (see README).
+precursors:
+  flanks: [15, 50]       # [short, long] flanking bases (as in v0)
+  temperature: 25        # REQUIRED, no default: folding temperature in Celsius of your
+                         # organism (v0 used 25 for bivalves; 37 for mammals)
+  shuffles: 1000         # dinucleotide-shuffled windows for the p-value (0: no p-value)
