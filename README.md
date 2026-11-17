@@ -312,6 +312,20 @@ each simulated small RNA whether it was recovered as its own locus, merged with
 another, split, missed, or filtered out, and lists passing loci that contain no
 simulated small RNA.
 
+`simulate --mode best|severe|evil` (default `best`) and `--evil-max-diff 0|1` (default 1)
+write the genome choice (`assignment.mode`, `assignment.evil_max_diff`) into the
+configuration. The simulated NUMTs are the cases on which the modes differ: a nuclear copy
+that is identical (a tie), one with one mismatch (kept by `best` and `severe`, removed by
+`evil`), one with two mismatches (kept by every mode) and one whose nuclear copy is the
+expressed one (always `excluded`). `truth/features.tsv` holds the outcome expected under
+each mode (`expected_best`, `expected_severe`, `expected_evil`); `evaluate` reads the mode
+the run used from `results/report/provenance.yaml`, compares with the matching column, and
+reports the reads and small RNAs removed as `evil_rejected` (`evaluation/origin_by_feature.tsv`).
+
+```bash
+smithhunter simulate --outdir sim_evil --mode evil
+```
+
 ## Known limitations
 
 - On simulated data, every small RNA has the expected outcome with up to 30% of the
