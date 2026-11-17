@@ -141,7 +141,7 @@ class Source:
     counts: list[int] = field(default_factory=list)
     sequence: str = ""
     by_mode: dict[str, str] = field(default_factory=dict)  # mode -> outcome, if not `expected`
-    extra: bool = False  # drawn from the generator of the mode scenarios
+    stream: str = "main"  # random generator of its counts and inserts (see Simulator.stream)
 
 
 FLANK = 5
@@ -166,18 +166,22 @@ class Simulator:
         self.rng = random.Random(p.seed)
         self.samples = [f"sim{i + 1}" for i in range(p.samples)]
         self.sources: list[Source] = []
-        # generator of the scenarios added for the genome-choice modes (see mode_scenarios)
-        self.rng_modes = random.Random(f"{p.seed}:modes")
+        # one generator per group of scenarios added later (genome-choice modes, module B),
+        # so that each group leaves the random stream of everything else untouched
+        self.streams = {"main": self.rng, "modes": random.Random(f"{p.seed}:modes"),
+                        "module_b": random.Random(f"{p.seed}:module_b")}
 
     @contextmanager
-    def mode_scenarios(self):
-        """Draw from a separate generator, so that these scenarios leave the random stream
-        (genomes, planted target sites, inserts) of everything else untouched."""
-        self.rng, self.rng_modes = self.rng_modes, self.rng
+    def stream(self, name: str):
+        """Draw from the generator ``name`` inside the block."""
+        saved, self.rng = self.rng, self.streams[name]
         try:
             yield
         finally:
-            self.rng, self.rng_modes = self.rng_modes, self.rng
+            self.rng = saved
+
+    def mode_scenarios(self):
+        return self.stream("modes")
 
     def expected(self, src: Source, mode: str) -> str:
         if mode == "evil" and self.p.evil_max_diff == 0:
@@ -341,6 +345,8 @@ class Simulator:
 
         with self.mode_scenarios():
             self.add_mode_scenarios(mito, nuclear, taken)
+        with self.stream("module_b"):
+            self.add_hairpin(mito, taken)
 
         # tRNA fragments: 5' fragments map; 3' fragments with CCA mostly do not (up to 3
         # mismatches, fewer when the bases after the tRNA happen to match).
@@ -392,7 +398,7 @@ class Simulator:
         s = self.free_position(mito, 322, taken) + 150
         src = self.srna(mito, "srna_numt_2mm", "srna_numt_2mm", s, 22, "+",
                         self.per_sample(3000), "pass")
-        src.extra = True
+        src.stream = "modes"
         segment = mito.region(s - 150, s + 172)
         nuclear.append(("2mm", segment, {150 + i: other(segment[150 + i]) for i in (7, 14)}))
 
@@ -403,11 +409,28 @@ class Simulator:
         s = self.free_position(mito, 322, taken) + 150
         src = self.srna(mito, "srna_numt_nuclear", "srna_numt_nuclear", s, 22, "+",
                         self.per_sample(3000), "fail", group="nuclear_numt")
-        src.extra = True
+        src.stream = "modes"
         pos = FLANK + 11
         src.alt = {pos: other(src.template[pos])}
         src.alt_fraction = [1.0] * self.p.samples
         nuclear.append(("nuclear_1mm", mito.region(s - 150, s + 172), {150 + 11: src.alt[pos]}))
+
+    def add_hairpin(self, mito: Genome, taken: list[tuple]):
+        """A smallRNA in the 5' arm of a hairpin, for precursor folding (module B): stem of
+        22 bp with one mismatch, loop of 10 nt. Called inside ``stream("module_b")``; it
+        rewrites a free stretch of the mitochondrion, away from the other smallRNAs."""
+        s = self.free_position(mito, 54 + 80, taken) + 40
+        arm = mito.seq[s:s + 22]
+        loop = self.random_seq(10, at=0.6)
+        arm3 = list(revcomp(arm))
+        arm3[11] = arm[10]          # one mismatch in the middle of the stem
+        hairpin = arm + loop + "".join(arm3)
+        mito.seq = mito.seq[:s] + hairpin + mito.seq[s + len(hairpin):]
+        src = self.srna(mito, "srna_hairpin", "srna_hairpin", s, 22, "+",
+                        self.per_sample(3000), "pass")
+        src.stream = "module_b"
+        self.hairpins = [{"feature_id": src.id, "arm": "5p", "stem_bp": 21, "loop": len(loop),
+                          "genomic_start": s + 1, "genomic_end": s + len(hairpin)}]
 
     def build_nuclear(self, numts: list) -> Genome:
         p, rng = self.p, self.rng
@@ -508,10 +531,40 @@ class Simulator:
             pos = rng.randint(a + 20, b - 20 - len(site))
             seq[pos:pos + len(site)] = list(site if gene["strand"] == "+" else revcomp(site))
             self.planted.append({"feature_id": guide.id, "transcript": f"{gene['id']}.t1",
-                                 "gene": gene["id"], "site_class": cls,
+                                 "gene": gene["id"], "site_class": cls, "pairing": "seed",
                                  "genomic_start": pos + 1, "genomic_end": pos + len(site)})
+        with self.stream("module_b"):
+            self.plant_extended_sites(seq, genes[15:25], guides[:10])
         self.genes = genes
         return genes
+
+    def plant_extended_sites(self, seq: list[str], genes: list[dict], guides: list):
+        """8mer sites with pairing beyond the seed, which the energy predictors of module B
+        should rank above the decoys (the seed-only sites above should not stand out).
+
+        ``extensive``: guide 2-8 and 12 to the 3' end pair, 9-11 do not (a central
+        bulge, so the target is not a copy of the smallRNA that reads could align to);
+        ``supplementary``: guide 2-8 and 13-16 pair (Grimson et al. 2007), nothing else.
+        Called inside ``stream("module_b")``."""
+        rng = self.rng
+        for k, (guide, gene) in enumerate(zip(guides, genes)):
+            g = guide.sequence
+            n = len(g)
+            pairing = "extensive" if k < 5 else "supplementary"
+            paired = set(range(2, 9)) | (set(range(12, n + 1)) if pairing == "extensive"
+                                         else set(range(13, 17)))
+            # target 5'->3' opposite guide n..2, then the A opposite guide position 1;
+            # a base equal to the guide base never pairs (no G:U either)
+            site = "".join(revcomp(g[q - 1]) if q in paired else g[q - 1]
+                           for q in range(n, 1, -1)) + "A"
+            a, b = gene["utr3"]
+            pos = rng.randint(a + 20, b - 20 - len(site))
+            seq[pos:pos + len(site)] = list(site if gene["strand"] == "+" else revcomp(site))
+            t1 = pos + len(site) if gene["strand"] == "+" else pos + 1
+            seed_span = (t1 - 7, t1) if gene["strand"] == "+" else (t1, t1 + 7)
+            self.planted.append({"feature_id": guide.id, "transcript": f"{gene['id']}.t1",
+                                 "gene": gene["id"], "site_class": "8mer", "pairing": pairing,
+                                 "genomic_start": seed_span[0], "genomic_end": seed_span[1]})
 
     def write_nuclear_gff(self, path: Path, contig: str):
         with open(path, "w") as fh:
@@ -635,21 +688,19 @@ class Simulator:
                 fh.write(f"{mito.contig}\tsimulate\t{ftype}\t{s + 1}\t{e}\t.\t{strand}\t.\t"
                          f"ID={name};Name={name}\n")
 
-        usual = [src for src in self.sources if not src.extra]
-        extra = [src for src in self.sources if src.extra]
-        for src in usual:
-            src.counts = [self.neg_binomial(m) for m in src.means]
-        with self.mode_scenarios():
-            for src in extra:
-                src.counts = [self.neg_binomial(m) for m in src.means]
+        groups = {name: [src for src in self.sources if src.stream == name]
+                  for name in self.streams}
+        for name, sources in groups.items():
+            with self.stream(name):
+                for src in sources:
+                    src.counts = [self.neg_binomial(m) for m in src.means]
         quality = "F" * p.read_length
         for i, sample in enumerate(self.samples):
             reads = []
-            for src in usual:
-                reads.extend(self.insert(src, i) for _ in range(src.counts[i]))
-            with self.mode_scenarios():
-                for src in extra:
-                    reads.extend(self.insert(src, i) for _ in range(src.counts[i]))
+            for name, sources in groups.items():
+                with self.stream(name):
+                    for src in sources:
+                        reads.extend(self.insert(src, i) for _ in range(src.counts[i]))
             self.rng.shuffle(reads)
             r1 = gzip.open(out / "data" / f"{sample}_1.fastq.gz", "wt", compresslevel=1)
             r2 = (gzip.open(out / "data" / f"{sample}_2.fastq.gz", "wt", compresslevel=1)
@@ -699,8 +750,10 @@ class Simulator:
                   ["setting", "value"])
 
         write_tsv(str(out / "truth" / "targets.tsv"), self.planted,
-                  ["feature_id", "transcript", "gene", "site_class", "genomic_start",
-                   "genomic_end"])
+                  ["feature_id", "transcript", "gene", "site_class", "pairing",
+                   "genomic_start", "genomic_end"])
+        write_tsv(str(out / "truth" / "hairpins.tsv"), getattr(self, "hairpins", []),
+                  ["feature_id", "arm", "stem_bp", "loop", "genomic_start", "genomic_end"])
 
         groups: dict[str, list[int]] = {}
         for src in self.sources:

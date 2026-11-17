@@ -105,6 +105,14 @@ targets:
   candidates: results/discovery/candidates.fasta   # edit a copy to review candidates
   seed: [2, 8]                                     # guide positions; v0 used [4, 10]
   decoys: 20                                       # dinucleotide-shuffled decoys each
+  # Step 2: energy scores of the sites, q-values from the decoys (see README)
+  predictors: [intarna, rnahybrid]                 # [] -> seed sites only
+  fdr: 0.05                                        # q-value threshold of `support`
+  score_weak_sites: false                          # 6mer, offset-6mer: listed, not scored
+  # temperature: 25         # IntaRNA, Celsius; default: precursors.temperature, else 37.
+  #                         # RNAhybrid has no temperature option (37 C parameters).
+  # intarna_context: 200    # nt of the region on each side of a site given to IntaRNA
+  # calibration_windows: 2000  # RNAcalibrate sample of the regions; 0 -> rank by MFE
 
 # ---------------------------------------------------------------------------------------
 # Module B (precursor folding): snakemake -s workflow/Snakefile --cores 8 precursors

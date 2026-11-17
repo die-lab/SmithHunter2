@@ -96,8 +96,11 @@ def score_args(wildcards):
     args = []
     if TARGETS_CFG.get("score_weak_sites"):
         args.append("--score-weak-sites")
-    if TARGETS_CFG.get("temperature") is not None:
-        args.append(f"--temperature {TARGETS_CFG['temperature']}")
+    # the organism's temperature: targets.temperature, else the one of the precursors
+    folding = config.get("precursors") or {}
+    temperature = TARGETS_CFG.get("temperature", folding.get("temperature"))
+    if temperature is not None:
+        args.append(f"--temperature {temperature}")
     for key, flag in (("fdr", "--fdr"), ("intarna_context", "--context"),
                       ("calibration_windows", "--calibration-windows")):
         if TARGETS_CFG.get(key) is not None:

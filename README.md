@@ -26,8 +26,8 @@ SmithHunter2 is a rewrite of [SmithHunter](https://github.com/ESZlab/SmithHunter
 (small mitochondrial highly transcribed RNAs) but no longer limited to mitochondria.
 
 > **Status: early development.** Module A (small RNA discovery) works and is tested.
-> Module B is in progress: seed sites and precursor folding are available, energy and
-> accessibility scores are next ([design](docs/module_b_design.md)).
+> Module B (target prediction and precursor folding) works on simulated data; the
+> bacterial mode and the plots of module B are next ([design](docs/module_b_design.md)).
 
 ## How it works
 
@@ -105,7 +105,8 @@ Requirements: Linux and conda (or mamba). No root access is needed.
 ```bash
 git clone https://github.com/die-lab/SmithHunter2.git
 cd SmithHunter2
-mamba env create -f environment.yml      # fastp, bowtie 1, snakemake, python
+mamba env create -f environment.yml      # fastp, bowtie 1, snakemake, python,
+                                         # IntaRNA, RNAhybrid, ViennaRNA (module B)
 mamba activate smithhunter2
 ```
 
@@ -245,7 +246,7 @@ snakemake -s /path/to/SmithHunter2/workflow/Snakefile --cores 8 --sdm conda repo
 The reporting layer (funnel, provenance, ggplot2 plots, MultiQC) follows the one of the
 smithhunter24 Snakemake port of SmithHunter v0 module A.
 
-## Target prediction (module B, in progress)
+## Target prediction (module B)
 
 After reviewing the candidates of module A, declare the transcripts to search as
 **target sets** and run the `targets` rule:
@@ -260,6 +261,13 @@ targets:
   candidates: results/discovery/candidates.fasta
   seed: [2, 8]
   decoys: 20
+  predictors: [intarna, rnahybrid]   # [] for seed sites only
+  fdr: 0.05                          # q-value threshold of `support`
+  score_weak_sites: false            # 6mer and offset-6mer: listed, not scored
+  # temperature: 25                  # IntaRNA, Celsius; default precursors.temperature,
+                                     # else 37 (RNAhybrid has no temperature option)
+  # intarna_context: 200             # nt of the region around a site given to IntaRNA
+  # calibration_windows: 2000        # RNAcalibrate sample; 0: rank RNAhybrid by MFE
 ```
 
 ```bash
@@ -278,11 +286,45 @@ features) or from a transcripts FASTA.
 | `sites.tsv` | every site: candidate, transcript, gene, class, position in the region and in the genome, distance from the region ends, AU content of the flanks, 3' supplementary pairing (guide 13–16) |
 | `targets.tsv` | one row per candidate and transcript: sites per class, best class |
 | `site_fdr.tsv` | sites per class for each candidate and for its dinucleotide-shuffled decoys |
+| `scored_sites.tsv` | `sites.tsv` plus the scores of each predictor, their q-values and `support` |
+| `scored_targets.tsv` | one row per candidate and transcript: sites per class, best scores, best q-values, `max_support`, `sites_supported` (sites with every predictor at q ≤ `fdr`) |
+| `decoy_scores.tsv` | the scores of every decoy site |
+| `fdr_curves.tsv` | real and decoy sites at each score threshold, per predictor and class |
 
-The decoys show how many sites a sequence of the same composition finds by chance.
-Expect this to be close to the real count: a seed match on its own does not make a
-target. Energy and accessibility scores per site (IntaRNA, RNAhybrid), with q-values from
-the same decoys, are the next step.
+The decoys (`targets/decoys.fasta`, 20 dinucleotide-shuffled copies of each candidate)
+show how many sites a sequence of the same composition finds by chance. Expect
+`site_fdr.tsv` to be close to 1: a seed match on its own does not make a target.
+
+Sites are then scored, and the decoys' sites go through the identical scoring:
+
+- **IntaRNA** (energy with the accessibility of both partners): the seed is pinned to the
+  site (guide and target positions, no G:U), the interaction is confined to the site and
+  the 3' part of the guide. Accessibility is computed once per region on the whole region.
+  Columns: `intarna_E` (total), `intarna_E_hybrid`, `intarna_ED_target`,
+  `intarna_ED_query`, the paired stretch and the duplex.
+- **RNAhybrid** (duplex energy): a window around the site, with the helix constraint `-f`
+  of the site class. Columns: `rnahybrid_mfe`, `rnahybrid_p`, the paired stretch,
+  `rnahybrid_on_site` (0 when the duplex pairs the seed elsewhere in the window). The
+  p-value uses extreme value parameters fitted by RNAcalibrate per candidate on windows of
+  the target regions themselves, not the fly/worm/human presets; the fit runs without the
+  helix constraint (with it, it fails for about a quarter of the small RNAs), so the
+  p-value is conservative. It is descriptive: q-values do not use it.
+
+Each energy is standardised against the candidate's own decoy sites (`<predictor>_z`,
+standard deviations from their mean; lower is better). Decoys share their candidate's
+length and composition, so this removes what composition does to energies: without it a
+GC-rich small RNA's decoys, pairing strongly with anything, hide the true sites of AT-rich
+ones. For each predictor and site class, real and decoy z-scores then give an empirical
+FDR: (decoy sites at or beyond the score / decoys per candidate) / real sites at or beyond
+it. `<predictor>_q` is that q-value pooled over candidates; `<predictor>_q_candidate` uses
+only the candidate's own decoys, on the raw energy. `support` is the number of predictors
+with q ≤ `fdr`. Nothing is filtered out. A site that beats the decoys shows
+complementarity beyond chance, which is not proof of regulation.
+
+Run time: on the simulation (62 candidates, 20 decoys each, 50 3'UTRs, 7600 scored sites
+of real and decoy small RNAs) scoring takes about 1.5 minutes on 2 cores. It grows with
+the number of sites, so the first knob on a large UTRome is `score_weak_sites: false`
+(the default).
 
 ## Precursor folding (module B)
 
@@ -355,6 +397,19 @@ snakemake -s ../workflow/Snakefile --cores 2
 smithhunter evaluate                        # writes evaluation/summary.txt and tables
 ```
 
+For module B, 50 nuclear genes carry planted 8mer sites in their 3'UTRs: seed matches
+only for 15 small RNAs (with 3'UTRs of random sequence, these should not stand out from
+the decoys), and sites with pairing beyond the seed for 10 (`extensive`: guide 2–8 and
+12 to the end; `supplementary`: guide 2–8 and 13–16), which should. One small RNA sits in
+the 5' arm of a hairpin (21 bp stem). Run `snakemake ... targets precursors` before
+`evaluate` to get the recovery of the planted sites, their support, the share of calls
+that are not planted, and whether the hairpin is found. On the clean simulation (seed
+1): every planted site is found with its class; support ≥ 1 for 4 of 5 `extensive` sites
+(2 with both predictors), 0 of 5 `supplementary` and 0 of 15 seed-only sites; 1 of the 5
+called sites is not planted. The missed `extensive` site belongs to an almost pure A/U
+small RNA, whose 17-bp duplex is weak (z = −2) compared with the chance pairing of its
+own decoys.
+
 `smithhunter simulate --help` lists the options (number of samples and reads, genome
 sizes, degradation level, error rate, paired-end reads, seed). `evaluate` reports for
 each simulated small RNA whether it was recovered as its own locus, merged with
@@ -398,9 +453,10 @@ they check that the workflow runs, not that the results are meaningful.
 
 ## Roadmap
 
-1. Module B: IntaRNA and RNAhybrid scores per site with q-values from decoys, then the
-   opt-in bacterial mode.
-2. Report: plots of module B results.
+1. Module B: the opt-in bacterial mode (IntaRNA around start codons, no seed rule).
+2. Report: plots of module B results, and a summary joining module A and module B per
+   candidate.
+3. Module A: thresholds tuned on a full-size real library.
 
 ## Citation
 

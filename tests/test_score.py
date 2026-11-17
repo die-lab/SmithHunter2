@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from smithhunter.targets import intarna, rnahybrid
+from smithhunter.targets.fdr import qvalues
 from smithhunter.targets.pipeline import run_sites
 from smithhunter.targets.regions import Region, revcomp
 from smithhunter.targets.score import (Job, add_qvalues, collect_jobs, run_scoring,
@@ -148,32 +149,46 @@ def job(gid, cls="8mer", start=0, decoy=False, cand="c1"):
     return Job(gid, cand, decoy, "ACGT", 0, start, start + 8, start + 7, cls)
 
 
-def test_qvalues_per_class_candidate_and_support():
-    real = [job("c1", start=i) for i in range(3)] + [job("c2", start=5, cand="c2")]
-    decoys = [job(f"c1__decoy{i}", start=10 + i, decoy=True) for i in range(4)]
-    weak = job("c1", "7mer-m8", start=30)
-    jobs = real + decoys + [weak]
-    energies = [-20.0, -9.0, -5.0, -9.5, -10.0, -6.0, -4.0, -3.0]
-    scores = {j: {"intarna_E": e, "rnahybrid_p": 0.5} for j, e in zip(real + decoys, energies)}
-    scores[weak] = {"intarna_E": -1.0}  # no RNAhybrid hit
-    curves = add_qvalues(jobs, scores, {"intarna": "intarna_E", "rnahybrid": "rnahybrid_p"},
-                         n_decoys=2, fdr=0.05)
-    # pooled, 2 decoys per candidate: nothing beats -20; one decoy (0.5 expected false
-    # sites) beats -9.5 and -9: FDR 0.5/2 at -9.5 and 0.5/3 at -9 ...
-    assert scores[real[0]]["intarna_q"] == 0.0
-    assert scores[real[1]]["intarna_q"] == pytest.approx(0.5 / 3, abs=1e-6)
-    # ... and the q-value is the lowest FDR among the thresholds a site passes
-    assert scores[real[3]]["intarna_q"] == pytest.approx(0.5 / 3, abs=1e-6)
-    assert scores[real[1]]["intarna_q"] <= scores[real[2]]["intarna_q"]
-    # per candidate, c2 has no decoys of its own
-    assert scores[real[3]]["intarna_q_candidate"] == 0.0
-    # classes are separate: the 7mer has no decoy in its class
-    assert scores[weak]["intarna_q"] == 0.0 and "rnahybrid_q" not in scores[weak]
-    assert scores[real[0]]["support"] == 1 and scores[weak]["support"] == 1
-    assert scores[real[2]]["support"] == 0 and "support" not in scores[decoys[0]]
-    top = [c for c in curves if c["predictor"] == "intarna" and c["site_class"] == "8mer"]
-    assert [c["real_sites"] for c in top] == [1, 2, 3, 4]
-    assert [c["decoy_sites"] for c in top] == [0, 1, 1, 2]
+def test_standardised_qvalues_per_class_candidate_and_support():
+    """An AT-rich candidate (weak energies) and a GC-rich one (strong energies), five
+    decoy sites each: on raw energies the GC-rich decoys would hide the AT-rich site that
+    clearly beats its own decoys; standardised, it stands out and the GC-rich site that
+    is average for its decoys does not."""
+    at_real = [job("c1", start=0), job("c1", start=1)]
+    gc_real = [job("c2", start=2, cand="c2")]
+    at_decoys = [job(f"c1__d{i}", start=10 + i, decoy=True) for i in range(5)]
+    gc_decoys = [job(f"c2__d{i}", start=20 + i, decoy=True, cand="c2") for i in range(5)]
+    seven = job("c1", "7mer-m8", start=30)
+    few = [job("c3", start=40, cand="c3")] + \
+        [job(f"c3__d{i}", start=41 + i, decoy=True, cand="c3") for i in range(2)]
+    energies = {at_real[0]: -9.0, at_real[1]: -5.0, gc_real[0]: -15.0, seven: -7.0,
+                **dict(zip(at_decoys, [-4.0, -5.0, -6.0, -5.0, -5.0])),
+                **dict(zip(gc_decoys, [-14.0, -15.0, -16.0, -15.0, -15.0])),
+                **dict(zip(few, [-30.0, -1.0, -2.0]))}
+    jobs = list(energies)
+    scores = {j: {"intarna_E": e} for j, e in energies.items()}
+    curves = add_qvalues(jobs, scores, {"intarna": "intarna_E"}, n_decoys=5, fdr=0.05)
+    sd = 0.4 ** 0.5
+    assert scores[at_real[0]]["intarna_z"] == pytest.approx(-4 / sd, abs=1e-3)
+    assert scores[gc_real[0]]["intarna_z"] == 0.0
+    # pooled on z: nothing beats the AT-rich site; 8 decoy sites (1.6 per candidate)
+    # reach z = 0, where there are 3 real sites
+    assert scores[at_real[0]]["intarna_q"] == 0.0 and scores[at_real[0]]["support"] == 1
+    assert scores[gc_real[0]]["intarna_q"] == pytest.approx(1.6 / 3, abs=1e-6) and scores[gc_real[0]]["support"] == 0
+    # raw energies pooled would have given the AT-rich site a q of (5 / 5) / 2
+    assert qvalues([-9.0, -5.0, -15.0], [-4, -5, -6, -5, -5, -14, -15, -16, -15, -15],
+                   5)[0] == pytest.approx(0.5, abs=1e-6)
+    # per candidate, on raw energies
+    assert scores[at_real[0]]["intarna_q_candidate"] == 0.0
+    # classes are separate: the 7mer has no decoy site in its class
+    assert scores[seven]["intarna_q"] == 0.0
+    # too few decoy scores: no z, no pooled q, but a per-candidate q
+    assert "intarna_z" not in scores[few[0]] and "intarna_q" not in scores[few[0]]
+    assert scores[few[0]]["intarna_q_candidate"] == 0.0 and scores[few[0]]["support"] == 0
+    assert "support" not in scores[at_decoys[0]]
+    top = [c for c in curves if c["site_class"] == "8mer"]
+    assert [(c["real_sites"], c["decoy_sites"]) for c in top] == [(1, 0), (3, 8)]
+    assert all(c["score"] == "intarna_z" for c in top)
 
 
 def test_weak_classes_scored_only_on_request():
@@ -185,13 +200,16 @@ def test_weak_classes_scored_only_on_request():
 def fake_pipeline(score_weak=False):
     guide = "TGAGGTAGTAGGTTGTATAGTT"
     h28 = revcomp(guide[1:8])
-    utr = "CCGCC" * 6 + h28 + "A" + "CCGCC" * 6 + "G" + h28[1:] + "CCGCC"   # 8mer and 6mer
+    decoy_seq = "TCCGCCGGTTGATAGTTGAGTA"
+    decoy_site = revcomp(decoy_seq[1:8]) + "A"   # an 8mer of the decoys
+    utr = ("CCGCC" * 6 + h28 + "A" + "CCGCC" * 6 + "G" + h28[1:] + "CCGCC"   # 8mer, 6mer
+           + "TTTTT" + decoy_site + "TTTTT")
     regions = [Region("t1|u", "t1", "g1", "three_prime_UTR", utr),
                Region("t2|u", "t2", "g1", "three_prime_UTR", utr),     # isoform, same UTR
                Region("t3|u", "t3", "g2", "three_prime_UTR", "GGCGG" * 8 + h28 + "CGG")]
     candidates = [("c1", guide)]
-    decoy_seq = "TCCGCCGGTTGATAGTTGAGTA"   # seed 2-8 matches CGGCGGA in the first UTR
-    decoys = [("c1__decoy001", "c1", decoy_seq), ("c1__decoy002", "c1", "TTTTTTTTTTTTTTTTTTTTTT")]
+    decoys = [(f"c1__decoy{i:03d}", "c1", decoy_seq) for i in range(1, 6)]
+    decoys.append(("c1__decoy006", "c1", "TTTTTTTTTTTTTTTTTTTTTT"))
     _, site_rows, _, _ = run_sites(candidates, decoys, regions)
     site_rows = [{k: str(v) for k, v in r.items()} for r in site_rows]
     calls = []
@@ -199,7 +217,9 @@ def fake_pipeline(score_weak=False):
     def make(unique):
         def predict_all(jobs, threads):
             calls.extend(jobs)
-            return [{"intarna_E": -5.0 if j.decoy else -15.0 - j.target} for j in jobs]
+            return [{"intarna_E": -5.0 - 0.1 * int(j.guide_id[-1]) if j.decoy
+                     else -15.0 - j.target}
+                    for j in jobs]
         return predict_all
     out = run_scoring(candidates, decoys, regions, site_rows, {"intarna": make},
                       {"intarna": "intarna_E"}, score_weak=score_weak)

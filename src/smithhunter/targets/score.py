@@ -4,14 +4,16 @@ Candidates and their decoys go through the identical scan and the identical pred
 (IntaRNA, RNAhybrid). Each unique (small RNA, region sequence, site) is scored once;
 isoforms sharing a region sequence share the score and count once for the FDR.
 
-For each predictor and site class, real and decoy scores are pooled and each real site
-gets a q-value: the lowest FDR among the thresholds it passes, with
+For each predictor and site class, real and decoy standardised scores are pooled and each
+real site gets a q-value: the lowest FDR among the thresholds it passes, with
 FDR = (decoy sites passing / decoys per candidate) / real sites passing. A second
 q-value uses only the candidate's own sites and decoys. ``support`` is the number of
 predictors with pooled q <= ``fdr``. Nothing is filtered: every score stays in the table.
 
-The score ranked by each predictor: IntaRNA total energy E; RNAhybrid p-value
-(calibrated per candidate on the target regions), or its MFE when calibration is off.
+The score ranked by each predictor is its energy (IntaRNA total energy E, RNAhybrid MFE),
+standardised against the candidate's own decoy sites (``<predictor>_z``) before pooling,
+so that the composition of a small RNA does not decide its q-values. RNAhybrid's p-value
+(calibrated per candidate on the target regions) is reported, not ranked.
 
 The FDR measures how specific the procedure is, not the biology: a site that beats the
 decoys is a real complementarity signal, not proof of regulation.
@@ -25,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 from bisect import bisect_right
+from statistics import mean, pstdev
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -37,12 +40,12 @@ from .sites import Site, scan, site_classes
 
 WEAK = ("6mer", "offset-6mer")
 PREDICTORS = ("intarna", "rnahybrid")
-RANKED = {"intarna": "intarna_E", "rnahybrid": "rnahybrid_p"}
+RANKED = {"intarna": "intarna_E", "rnahybrid": "rnahybrid_mfe"}
 SCORE_COLUMNS = {
-    "intarna": ["intarna_E", "intarna_E_hybrid", "intarna_ED_target", "intarna_ED_query",
-                "intarna_target", "intarna_guide", "intarna_duplex"],
-    "rnahybrid": ["rnahybrid_mfe", "rnahybrid_p", "rnahybrid_target", "rnahybrid_pairs",
-                  "rnahybrid_on_site"],
+    "intarna": ["intarna_E", "intarna_z", "intarna_E_hybrid", "intarna_ED_target",
+                "intarna_ED_query", "intarna_target", "intarna_guide", "intarna_duplex"],
+    "rnahybrid": ["rnahybrid_mfe", "rnahybrid_z", "rnahybrid_p", "rnahybrid_target",
+                  "rnahybrid_pairs", "rnahybrid_on_site"],
 }
 
 
@@ -201,38 +204,73 @@ def score_jobs(jobs: list[Job], predictors: dict, threads: int = 1) -> dict[Job,
     return scores
 
 
+MIN_DECOY_SCORES = 5
+
+
+def standardise(jobs: list[Job], scores: dict[Job, dict], predictor: str, column: str) -> None:
+    """Add ``<predictor>_z``: the score in standard deviations from the mean of the scores
+    of the candidate's own decoy sites (all classes). Lower is better, as for energies.
+
+    Decoys have the length and dinucleotide composition of their candidate, so this takes
+    out what composition does to the energies (a GC-rich small RNA pairs more strongly
+    with anything). Without it, pooling raw energies over candidates lets the decoys of
+    GC-rich candidates hide the true sites of AT-rich ones. A candidate with fewer than
+    ``MIN_DECOY_SCORES`` decoy scores, or with all of them equal, gets no z.
+    """
+    decoy_values: dict[str, list[float]] = defaultdict(list)
+    for j in jobs:
+        if j.decoy and scores[j].get(column, "") != "":
+            decoy_values[j.candidate].append(scores[j][column])
+    stats = {}
+    for cid, values in decoy_values.items():
+        if len(values) >= MIN_DECOY_SCORES and pstdev(values) > 0:
+            stats[cid] = (mean(values), pstdev(values))
+    for j in jobs:
+        value = scores[j].get(column, "")
+        if value != "" and j.candidate in stats:
+            m, sd = stats[j.candidate]
+            scores[j][f"{predictor}_z"] = round((value - m) / sd, 4)
+
+
 def add_qvalues(jobs: list[Job], scores: dict[Job, dict], ranked: dict[str, str],
                 n_decoys: int, fdr: float) -> list[dict]:
-    """Add ``<predictor>_q``, ``<predictor>_q_candidate`` and ``support`` to the scores of
-    the real sites; return the FDR curves (real and decoy counts at each threshold)."""
+    """Add ``<predictor>_z``, ``<predictor>_q``, ``<predictor>_q_candidate`` and
+    ``support`` to the scores of the real sites; return the FDR curves (real and decoy
+    counts at each threshold).
+
+    ``_q`` pools candidates on the standardised score (``standardise``), per site class.
+    ``_q_candidate`` uses the candidate's own decoys only, on the raw score."""
     curves = []
     by_class: dict[str, list[Job]] = defaultdict(list)
     for j in jobs:
         by_class[j.site_class].append(j)
     for predictor, column in ranked.items():
+        z = f"{predictor}_z"
+        standardise(jobs, scores, predictor, column)
         for cls, group in by_class.items():
-            have = [j for j in group if scores[j].get(column, "") != ""]
+            have = [j for j in group if scores[j].get(z, "") != ""]
             real = [j for j in have if not j.decoy]
-            decoy = [scores[j][column] for j in have if j.decoy]
-            q = qvalues([scores[j][column] for j in real], decoy, n_decoys)
+            decoy = [scores[j][z] for j in have if j.decoy]
+            q = qvalues([scores[j][z] for j in real], decoy, n_decoys)
             for j, value in zip(real, q):
                 scores[j][f"{predictor}_q"] = value
             per_candidate: dict[str, list[Job]] = defaultdict(list)
-            for j in have:
-                per_candidate[j.candidate].append(j)
+            for j in group:
+                if scores[j].get(column, "") != "":
+                    per_candidate[j.candidate].append(j)
             for members in per_candidate.values():
                 mine = [j for j in members if not j.decoy]
                 theirs = [scores[j][column] for j in members if j.decoy]
                 for j, value in zip(mine, qvalues([scores[j][column] for j in mine], theirs,
                                                   n_decoys)):
                     scores[j][f"{predictor}_q_candidate"] = value
-            real_scores = sorted(scores[j][column] for j in real)
+            real_scores = sorted(scores[j][z] for j in real)
             decoy.sort()
             for threshold in sorted(set(real_scores)):
                 n_real = bisect_right(real_scores, threshold)
                 n_decoy = bisect_right(decoy, threshold)
                 expected = n_decoy / max(1, n_decoys)
-                curves.append({"predictor": predictor, "score": column, "site_class": cls,
+                curves.append({"predictor": predictor, "score": z, "site_class": cls,
                                "threshold": threshold, "real_sites": n_real,
                                "decoy_sites": n_decoy, "expected_false": round(expected, 3),
                                "fdr": round(min(1.0, expected / n_real), 4)})
@@ -362,11 +400,11 @@ def run(candidates, decoys, regions, sites_path: str, wanted: list[str], seed=(2
             log(f"RNAcalibrate: parameters for {len(params)} of {len(guides)} candidates "
                 f"({calibration_windows} windows of the target regions)")
             if failed:
-                log(f"  no fit (no p-value, no RNAhybrid q-value) for: {', '.join(failed[:20])}"
+                log(f"  no fit (no p-value; MFE and q-values are kept) for: "
+                    f"{', '.join(failed[:20])}"
                     + (" ..." if len(failed) > 20 else ""))
         else:
-            ranked["rnahybrid"] = "rnahybrid_mfe"
-            log("RNAhybrid calibration is off: sites are ranked by MFE, no p-values")
+            log("RNAhybrid calibration is off: no p-values")
         predictors["rnahybrid"] = lambda unique, p=params: rnahybrid_predictor(unique, seed, p)
     result = run_scoring(candidates, decoys, regions, read_tsv(sites_path), predictors, ranked,
                          seed, classes, score_weak, fdr, threads)

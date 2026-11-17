@@ -421,37 +421,134 @@ def parse_genomic(text: str):
     return contig, int(a), int(b)
 
 
+def candidate_ids(results_dir: str, rows: list[dict]) -> dict[str, str]:
+    """Simulated smallRNA -> module A candidate id (through the representative read)."""
+    from .targets.pipeline import read_candidates
+    path = Path(results_dir) / "discovery" / "candidates.fasta"
+    if not path.exists():
+        return {}
+    by_rep = {seq: cid for cid, _, seq in read_candidates(str(path))}
+    return {r["feature_id"]: by_rep.get(r.get("rep_sequence", "")) for r in rows
+            if r["observed"] == "pass"}
+
+
+def matching_site(sites: list[dict], cid, planted: dict, order: dict) -> dict | None:
+    """The site of ``cid`` with the best class overlapping the planted site."""
+    start, end = int(planted["genomic_start"]), int(planted["genomic_end"])
+    best = None
+    for s in sites:
+        if s["candidate"] != cid or s["transcript"] != planted["transcript"] or not s["genomic"]:
+            continue
+        _, a, b = parse_genomic(s["genomic"])
+        if a <= end and b >= start and (best is None or
+                                        order[s["site_class"]] < order[best["site_class"]]):
+            best = s
+    return best
+
+
 def evaluate_targets(truth_dir: str, results_dir: str, rows: list[dict]):
-    """Planted seed sites (truth/targets.tsv) found in module B's sites.tsv, per target set."""
+    """Planted target sites (truth/targets.tsv) found in module B's sites.tsv, and, when
+    the sites were scored (scored_sites.tsv), their support and the share of calls
+    (support >= 1) that are not planted sites."""
     planted_path = Path(truth_dir) / "targets.tsv"
     site_files = sorted(Path(results_dir).glob("targets/*/sites.tsv"))
     if not planted_path.exists() or not site_files:
         return [], ""
-    from .targets.pipeline import read_candidates
     from .targets.sites import CANONICAL
-    by_rep = {seq: cid for cid, _, seq in
-              read_candidates(f"{results_dir}/discovery/candidates.fasta")}
-    candidate_of = {r["feature_id"]: by_rep.get(r.get("rep_sequence", "")) for r in rows
-                    if r["observed"] == "pass"}
+    candidate_of = candidate_ids(results_dir, rows)
     sites = [s for path in site_files for s in read_tsv(str(path))]
+    scored_files = sorted(Path(results_dir).glob("targets/*/scored_sites.tsv"))
+    scored = [s for path in scored_files for s in read_tsv(str(path))]
     order = {c: i for i, c in enumerate(CANONICAL)}
     out = []
     for p in read_tsv(str(planted_path)):
         cid = candidate_of.get(p["feature_id"])
-        start, end = int(p["genomic_start"]), int(p["genomic_end"])
-        best = ""
-        for s in sites:
-            if s["candidate"] != cid or s["transcript"] != p["transcript"] or not s["genomic"]:
-                continue
-            _, a, b = parse_genomic(s["genomic"])
-            if a <= end and b >= start and (not best or order[s["site_class"]] < order[best]):
-                best = s["site_class"]
+        hit = matching_site(sites, cid, p, order)
+        best = hit["site_class"] if hit else ""
         found = bool(best) and order[best] <= order[p["site_class"]]
-        out.append({**p, "candidate": cid or "", "found_class": best, "found": int(found)})
+        row = {**p, "pairing": p.get("pairing", "seed"), "candidate": cid or "",
+               "found_class": best, "found": int(found)}
+        if scored:
+            s = matching_site(scored, cid, p, order)
+            for col in ("intarna_E", "intarna_q", "rnahybrid_p", "rnahybrid_q", "support"):
+                row[col] = s.get(col, "") if s else ""
+        out.append(row)
     n = sum(r["found"] for r in out)
     text = f"Planted target sites found with their class (or better): {n}/{len(out)}\n"
     text += "".join(f"  missing: {r['feature_id']} {r['site_class']} in {r['transcript']} "
                     f"(candidate {r['candidate'] or 'none'})\n" for r in out if not r["found"])
+    if scored:
+        text += scoring_report(out, scored)
+    return out, text
+
+
+def scoring_report(planted: list[dict], scored: list[dict]) -> str:
+    """Support of the planted sites by kind of pairing, and how many calls are false.
+
+    Seed-only sites are not expected to stand out: a seed match is as frequent for the
+    decoys. Sites with pairing beyond the seed should. Every call (support >= 1) that is
+    not a planted site is false, as the simulated transcripts are random sequence."""
+    text = "Planted target sites by pairing, support >= 1 / 2 (q <= fdr):\n"
+    for kind in ("extensive", "supplementary", "seed"):
+        group = [r for r in planted if r["pairing"] == kind]
+        if group:
+            s1 = sum(1 for r in group if r["support"] not in ("", None) and int(r["support"]) >= 1)
+            s2 = sum(1 for r in group if r["support"] not in ("", None) and int(r["support"]) >= 2)
+            text += f"  {kind:<14} {s1}/{len(group)} {s2}/{len(group)}\n"
+    planted_keys = {(r["candidate"], r["transcript"]) for r in planted}
+    calls = [s for s in scored if s.get("support", "") not in ("", None) and int(s["support"]) >= 1]
+    true = [s for s in calls if (s["candidate"], s["transcript"]) in planted_keys
+            and any(r["candidate"] == s["candidate"] and r["transcript"] == s["transcript"]
+                    and r.get("support") not in ("", None) and int(r["support"]) >= 1
+                    and _same_site(r, s) for r in planted)]
+    n_false = len(calls) - len(true)
+    share = f"{n_false / len(calls):.2f}" if calls else "NA"
+    text += (f"Scored sites called (support >= 1): {len(calls)}, of which not planted: "
+             f"{n_false} (false discovery proportion {share})\n")
+    return text
+
+
+def _same_site(planted: dict, site: dict) -> bool:
+    if not site.get("genomic"):
+        return False
+    _, a, b = parse_genomic(site["genomic"])
+    return a <= int(planted["genomic_end"]) and b >= int(planted["genomic_start"])
+
+
+def evaluate_precursors(truth_dir: str, results_dir: str, rows: list[dict]):
+    """Planted hairpins (truth/hairpins.tsv) against precursors.tsv: the best window of the
+    smallRNA's candidate should be a significant single hairpin with the smallRNA in the
+    planted arm; the other candidates give the background rate of p <= 0.05."""
+    truth = Path(truth_dir) / "hairpins.tsv"
+    table = Path(results_dir) / "precursors" / "precursors.tsv"
+    if not truth.exists() or not table.exists():
+        return [], ""
+    windows = read_tsv(str(table))
+    best = {w["candidate"]: w for w in windows if w.get("best") == "1"}
+    candidate_of = candidate_ids(results_dir, rows)
+    out = []
+    for h in read_tsv(str(truth)):
+        cid = candidate_of.get(h["feature_id"])
+        w = best.get(cid, {})
+        p = float(w["pvalue"]) if w.get("pvalue") not in (None, "", "NA") else None
+        ok = (p is not None and p <= 0.05 and w.get("single_hairpin") == "1"
+              and w.get("arm") == h["arm"])
+        out.append({**h, "candidate": cid or "", "window": w.get("window", ""),
+                    "pvalue": w.get("pvalue", ""), "mfei": w.get("mfei", ""),
+                    "single_hairpin": w.get("single_hairpin", ""), "arm_found": w.get("arm", ""),
+                    "found": int(ok)})
+    planted = {r["candidate"] for r in out}
+    others = [w for c, w in best.items() if c not in planted and w.get("pvalue") not in ("", "NA")]
+    low = sum(1 for w in others if float(w["pvalue"]) <= 0.05)
+    n = sum(r["found"] for r in out)
+    text = (f"Planted hairpins found (best window p <= 0.05, single hairpin, smallRNA in the "
+            f"planted arm): {n}/{len(out)}\n")
+    text += "".join(f"  missing: {r['feature_id']} (candidate {r['candidate'] or 'none'}, "
+                    f"window {r['window']}, p {r['pvalue']}, arm {r['arm_found']})\n"
+                    for r in out if not r["found"])
+    if others:
+        text += (f"Other candidates with best-window p <= 0.05: {low}/{len(others)} "
+                 f"(about 0.1 expected: the best of two windows)\n")
     return out, text
 
 
@@ -472,5 +569,9 @@ def run(truth_dir: str, results_dir: str, outdir: str) -> str:
     if planted:
         write_tsv(f"{outdir}/target_sites.tsv", planted, list(planted[0]))
         text += "\n" + target_text
+    hairpins, hairpin_text = evaluate_precursors(truth_dir, results_dir, rows)
+    if hairpins:
+        write_tsv(f"{outdir}/hairpins.tsv", hairpins, list(hairpins[0]))
+        text += "\n" + hairpin_text
     Path(f"{outdir}/summary.txt").write_text(text)
     return text

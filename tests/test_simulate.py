@@ -226,11 +226,57 @@ def test_mode_scenarios_leave_everything_else_untouched(tmp_path, monkeypatch):
     without.run()
     for name in ("data/mito.fasta", "data/mito.gff3", "data/nuclear.gff3", "truth/targets.tsv"):
         assert (tmp_path / "a" / name).read_text() == (tmp_path / "b" / name).read_text()
-    assert len(read_tsv(str(tmp_path / "a/truth/targets.tsv"))) == 15
+    assert len(read_tsv(str(tmp_path / "a/truth/targets.tsv"))) == 25
     old = {s.id: (s.start, s.sequence, s.counts) for s in without.sources}
     new = {s.id: (s.start, s.sequence, s.counts) for s in with_modes.sources}
     assert set(new) - set(old) == {"srna_numt_2mm", "srna_numt_nuclear"}
     assert all(new[k] == v for k, v in old.items())
+
+
+def test_module_b_scenarios_leave_everything_else_untouched(tmp_path, monkeypatch):
+    kw = dict(reads=3000, nuclear_length=600_000, bacterium_length=20_000, srnas=16)
+    with_b = Simulator(Params(outdir=str(tmp_path / "a"), **kw))
+    with_b.run()
+    monkeypatch.setattr(Simulator, "add_hairpin", lambda self, mito, taken: None)
+    monkeypatch.setattr(Simulator, "plant_extended_sites", lambda self, seq, genes, guides: None)
+    without = Simulator(Params(outdir=str(tmp_path / "b"), **kw))
+    without.run()
+    old = {s.id: (s.start, s.sequence, s.counts) for s in without.sources}
+    new = {s.id: (s.start, s.sequence, s.counts) for s in with_b.sources}
+    assert set(new) - set(old) == {"srna_hairpin"}
+    assert all(new[k] == v for k, v in old.items())
+    planted = read_tsv(str(tmp_path / "a/truth/targets.tsv"))
+    assert planted[:15] == read_tsv(str(tmp_path / "b/truth/targets.tsv"))
+    assert [r["pairing"] for r in planted[15:]] == ["extensive"] * 5 + ["supplementary"] * 5
+
+
+def test_planted_extended_sites_and_hairpin(tmp_path):
+    from smithhunter.targets.regions import regions_from_genome
+    from smithhunter.targets.sites import scan
+    sim = Simulator(Params(outdir=str(tmp_path), reads=3000, nuclear_length=600_000,
+                           bacterium_length=20_000, srnas=16))
+    sim.run()
+    guide = {s.id: s.sequence for s in sim.sources}
+    regions = {r.transcript: r for r in regions_from_genome(
+        str(tmp_path / "data/nuclear.fasta"), str(tmp_path / "data/nuclear.gff3"),
+        ["three_prime_UTR"])}
+    pair = {("A", "T"), ("T", "A"), ("G", "C"), ("C", "G")}
+    for p in read_tsv(str(tmp_path / "truth/targets.tsv"))[15:]:
+        g, r = guide[p["feature_id"]], regions[p["transcript"]]
+        site = next(s for s in scan(g, r.sequence) if s.site_class == "8mer"
+                    and min(r.genomic(s.start), r.genomic(s.end - 1)) + 1
+                    == int(p["genomic_start"]))
+        # guide position q pairs with the target base t1 - (q - 1)
+        paired = {q for q in range(2, len(g) + 1)
+                  if (g[q - 1], r.sequence[site.t1 - (q - 1)]) in pair}
+        want = set(range(2, 9)) | (set(range(12, len(g) + 1)) if p["pairing"] == "extensive"
+                                   else set(range(13, 17)))
+        assert paired == want
+    h, = read_tsv(str(tmp_path / "truth/hairpins.tsv"))
+    mito = "".join(open(tmp_path / "data/mito.fasta").read().split("\n")[1:])
+    hp = mito[int(h["genomic_start"]) - 1:int(h["genomic_end"])]
+    assert hp[:22] == guide["srna_hairpin"]
+    assert sum(a == b for a, b in zip(hp[:22], revcomp(hp[-22:]))) == 21
 
 
 def test_run_settings_reads_provenance_then_config(tmp_path):
