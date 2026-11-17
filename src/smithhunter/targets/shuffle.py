@@ -21,7 +21,7 @@ def dinucleotide_shuffle(seq: str, rng: random.Random) -> str:
     for a, b in zip(seq, seq[1:]):
         edges[a].append(b)
     last = seq[-1]
-    vertices = set(edges) - {last}
+    vertices = sorted(set(edges) - {last})  # sorted: set order changes between processes
     while True:
         last_edge = {v: rng.choice(edges[v]) for v in vertices}
         if all(_reaches(v, last, last_edge) for v in vertices):
