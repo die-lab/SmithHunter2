@@ -42,6 +42,7 @@ ambiguous: report
 #             exclude genome at most `evil_max_diff` mismatches WORSE than its best focus
 #             alignment (mismatches on the exclude genome minus mismatches on the focus genome,
 #             1..evil_max_diff). Must be <= mapping.mismatches. 0 = same as severe.
+#             Evil aligns mapping.mismatches + evil_max_diff deep (max 3) to see those hits.
 assignment:
   mode: best
   evil_max_diff: 1       # only used by evil

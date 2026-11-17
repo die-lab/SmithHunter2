@@ -1,6 +1,8 @@
 # Module B – target prediction and precursor folding: design
 
-Status: agreed design, not implemented. The decisions of section 11 were accepted as
+Status: steps 1–3 and 5 of section 10 are implemented (see there for what differs from
+this design and why); bacterial mode, miRanda and the report are not. The decisions of
+section 11 were accepted as
 proposed (2026-10-09). The general seed-based logic (`ago`) is the default for every target
 set; `bacterial` mode runs only on target sets the user declares as bacterial.
 
@@ -299,6 +301,34 @@ Progress: step 1 is implemented (`regions`, `decoys`, `sites` subcommands, rule
 expected, the site-count FDR is close to 1: a seed match is about as frequent for a real
 small RNA as for its decoys. Counting sites shows how much of the signal is background
 but does not rank targets. Site-level q-values need the scores of step 2.
+
+Steps 2, 3 and 5 are implemented (2026-11-17: `score-sites`, `precursors`, simulation of
+extended sites and a hairpin, CI). Where the implementation departs from sections 4 and 6:
+
+- **IntaRNA accessibility.** Computed once per region on the whole region and written to
+  a table; each site gets the region clipped to `intarna_context` nt (default 200) on each
+  side with the matching slice of the table (`--tAcc E`). Results equal those on the whole
+  region (tested) and the cost per site no longer grows with region length: 8 min → 1.5 min
+  on the simulation. The seed is pinned on the target too (`--seedTRange`, `--seedNoGU`).
+- **RNAcalibrate without `-f`.** With the helix constraint the extreme value fit failed
+  for about a quarter of the guides (most random windows only form the forced, near-zero
+  duplex). Without it the p-value is the chance that a random window pairs as well, with
+  any structure: conservative. One fit per candidate, shared with its decoys.
+- **q-values on standardised energies.** Pooling raw energies over candidates, as in 4.3,
+  failed on the simulation: in an AT-rich genome the decoys of GC-rich candidates reach
+  energies that hide true sites of AT-rich candidates (3 of 5 extensive sites supported).
+  Each energy is now standardised against the candidate's own decoy sites
+  (`<predictor>_z`) before pooling (4 of 5). RNAhybrid is therefore ranked by its MFE;
+  the p-value is descriptive. The same decoys are used to standardise and as the null;
+  with 20 decoys and several sites each, the bias is small but not zero.
+- **IntaRNA temperature.** `targets.temperature`, else `precursors.temperature` (the
+  organism), else IntaRNA's 37 °C. RNAhybrid has no temperature option.
+- **Simulation results** (clean library, seed 1): all 25 planted sites found with their
+  class; support ≥ 1 for 4/5 extensive (2/5 both predictors), 0/5 supplementary, 0/15
+  seed-only; 1 of 5 called sites not planted. Hairpin found (best window p ≤ 0.05, single
+  hairpin, 5' arm); 5 of 63 other candidates have best-window p ≤ 0.05 (two windows each).
+- Not done from section 4.4: Snakemake scatter by candidate batches and the dry-run cost
+  estimate. Scoring runs in one job with `threads`.
 
 
 1. Regions, site scan, decoys, FDR on site counts only (no external tools). This is

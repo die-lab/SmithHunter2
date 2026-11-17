@@ -79,8 +79,12 @@ genome (best alignment of the read in each genome):
 | `severe` | as `best`, but a tie is always discarded |
 | `evil` | as `severe`, and the read is also discarded (`evil_rejected`) when an exclude genome fits it at most `assignment.evil_max_diff` mismatches worse than the focus genome, even though the focus genome fits better |
 
-`evil_max_diff` must not exceed `mapping.mismatches`; in `evil` mode bowtie also reports the
-worse alignments (no `--strata`/`-m`, up to `max_hits + 1` alignments) so they can be seen.
+`evil_max_diff` must not exceed `mapping.mismatches`. In `evil` mode bowtie also reports the
+worse alignments (no `--strata`/`-m`, up to `max_hits + 1` alignments) and searches
+`mapping.mismatches + evil_max_diff` mismatches deep (at most 3), so that a read with one
+mismatch on the focus genome sees an exclude copy with two. Alignments beyond
+`mapping.mismatches` only serve this comparison: a read with nothing else stays `unmapped`.
+Expect `evil` to remove more on large exclude genomes, where such near matches occur by chance.
 
 ### How loci are called
 

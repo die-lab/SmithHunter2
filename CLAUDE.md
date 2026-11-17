@@ -64,7 +64,8 @@ variable `three_score` in the filter.
   heteroplasmy). Locus definition by overlap alone chained a third of the smallRNAs with
   degradation into gene-sized loci, so loci are now split at 5' end peaks (Poisson test against the
   local background, `split_peaks` in `loci.py`); the expression filter subtracts each sample's
-  background. Simulations: 44/44 outcomes as expected from 0% to 30% degradation, several seeds.
+  background. Simulations: 44/44 outcomes as expected from 0% to 30% degradation, several seeds
+  (47/47 since the mode and module B scenarios of 2026-11-17).
 - On `.test` (real reads) peaks produced weak satellites 3-15 nt from strong loci and clusters of
   comparable peaks (imprecise 5' ends), and five_score inside a +-2 nt peak is always ~1.
   Fixed with satellite merging (<= 10 nt, < 10% of the reads) and the `isolation` filter (share of
@@ -104,9 +105,11 @@ variable `three_score` in the filter.
   only prints "not implemented" for now. The simulator plants 15 seed sites in nuclear 3'UTRs;
   `evaluate` finds 15/15. Site-count FDR is ~1 by nature (a seed match alone is not a target):
   ranking needs step 2.
-- RNA tools are installed in a separate env `smithhunter2-rna` (IntaRNA 3.4.1, RNAhybrid 2.1.2,
-  ViennaRNA 2.7.2; recipe `workflow/envs/rna.yaml`). Installing them into `smithhunter2`
-  (Python 3.14) silently gave IntaRNA 1.2.5 and ViennaRNA 2.4.7 (py27), so they were removed.
+- RNA tools were in a separate env `smithhunter2-rna`: installing them into `smithhunter2`
+  (Python 3.14) silently gave IntaRNA 1.2.5 and ViennaRNA 2.4.7 (py27). Fixed 2026-11-17:
+  `environment.yml` pins Python < 3.14 with minimum tool versions; it solves (micromamba) to
+  python 3.13, IntaRNA 3.4.1, RNAhybrid 2.1.2, ViennaRNA 2.7.2. On the server: recreate
+  `smithhunter2` from it, then `smithhunter2-rna` can go.
 - Pushing: `git push git@github.com:die-lab/SmithHunter2.git main` (SSH; the HTTPS remote has no
   credentials). Repo-local `user.email` is thepokemonmuia@gmail.com (the other address is blocked
   by GitHub email privacy). `gh` is not installed: CI status via
@@ -137,18 +140,42 @@ nuclear genome even when it fit the focus genome better.
   the origin summary has `evil_rejected` as a new class (check downstream code and plots that list classes);
   `evil` does not look at hit counts per genome, only at the best mismatch count.
 
+## Module B steps 2-3 and benchmark extensions (2026-11-17, branch `module-b-step2`)
+
+Done in a cloud session (micromamba env, not on the server). Details and deviations from the
+design in `docs/module_b_design.md` section 10.
+- `score-sites` (rule `score_sites`, in target `targets`): IntaRNA + RNAhybrid per site, z-scores
+  against the candidate's own decoys, pooled q-values per class, `support`. Accessibility once per
+  region, sliced per site. RNAcalibrate without `-f` (with it ~25% of fits failed); p descriptive.
+- `precursors` (rule and subcommand, `precursor.py`): two windows, RNAfold, AMFE/MFEI, shuffle
+  p-value ((k+1)/(n+1)), hairpin check. `precursors.temperature` is required (no default).
+- `shuffle.py`: the dinucleotide shuffle iterated over a set, so decoys depended on
+  PYTHONHASHSEED and were never reproducible between runs. Fixed (sorted); decoys of any earlier
+  run differ once.
+- evil mode: bowtie ran with `-v mapping.mismatches`, so a read with 1 mismatch on the focus genome
+  never saw an exclude hit with 2 and escaped evil. Now evil aligns with
+  `-v min(3, mismatches + evil_max_diff)`; hits beyond `mapping.mismatches` only feed the evil
+  comparison. `.test` evil: 19 passing loci instead of 23 (maintainer to confirm this is wanted).
+  `too_many_hits` is unlabelled in every mode; `evil_rejected` lists only the genomes within tolerance.
+  Downstream code builds class lists from the data, so `evil_rejected` shows up (R untested here).
+- Simulator: one random stream per scenario group (`main`, `modes`, `module_b`), so new scenarios
+  leave existing reads unchanged. New cases: NUMTs with 1 and 2 mismatches and a nuclear-expressed
+  one (`--mode`, `--evil-max-diff`; truth per mode), 10 extended target sites (5 extensive, 5
+  supplementary), one hairpin. Clean run: 47/47 as expected in best/severe/evil, 25/25 sites,
+  hairpin 1/1; support >= 1 for 4/5 extensive, 0/5 supplementary, 0/15 seed-only, 1 of 5 calls false.
+- Timing on the simulation (2 cores): score-sites ~1.7 min (218 real + 4560 decoy sites),
+  precursors ~5 min (63 candidates, 1000 shuffles).
+
 ## Next steps
 
-1. Single environment again: pin Python in `environment.yml` (e.g. `>=3.10,<3.14`) and add
-   `intarna>=3.4`, `rnahybrid`, `viennarna>=2.6` with minimum versions; check with a dry solve
-   (`mamba env create --dry-run -f environment.yml`). If it solves, drop `smithhunter2-rna`.
-2. Module B step 2 (`docs/module_b_design.md` sections 4.2-4.3): wrap IntaRNA (whole region for
-   accessibility, `--tRegion` on the site, seed pinned to guide 2-8) and RNAhybrid (window around
-   the site, `-f` matching the seed, `-d xi,theta` from RNAcalibrate on the same regions); score
-   real and decoy sites; q-values with `targets/fdr.py:qvalues`; `support` column. Add stored
-   tool outputs as parser test fixtures; extend the simulation check.
-3. Then: precursor folding (step 3), bacterial mode (step 4), plots of module B in the report.
-4. Module A: run on a full-size real library to tune thresholds, then legacy comparison with v0.
+1. On the server: recreate the env from `environment.yml`, run pytest, `.test`, and the simulation
+   with `targets precursors`; then module B on `.test` (needs a target set: a nuclear genome + GFF3).
+2. Maintainer decisions: stricter evil (above); `severe`/`evil` discarding ties between two focus
+   genomes; whether supplementary-pairing sites should be detectable (they are not now).
+3. Module B on a real UTRome: estimate cost first (sites per class x 21 sequences), consider
+   Snakemake scatter by candidate batches (design 4.4, not done).
+4. Bacterial mode (step 4), plots of module B in the report, a per-candidate summary joining A and B.
+5. Module A: run on a full-size real library to tune thresholds, then legacy comparison with v0.
    Optional tools later (MINTmap, Kraken2 on unmapped reads, ShortStack cross-check, AGO-CLIP).
 
 ## Commands
@@ -159,8 +186,9 @@ pytest                                            # unit tests (repo root)
 cd .test && snakemake -s ../workflow/Snakefile --cores 2   # integration test (module A)
 snakemake -s ../workflow/Snakefile --cores 2 --sdm conda report   # plots + MultiQC (from .test)
 # simulation benchmark, modules A and B (outside the repo, e.g. in a scratch dir):
-PYTHONPATH=src python -m smithhunter simulate --outdir /tmp/sim
+PYTHONPATH=src python -m smithhunter simulate --outdir /tmp/sim   # --mode evil, --seed N
 cd /tmp/sim && snakemake -s <repo>/workflow/Snakefile --cores 2 && \
-  snakemake -s <repo>/workflow/Snakefile --cores 2 targets && \
+  snakemake -s <repo>/workflow/Snakefile --cores 2 targets precursors && \
   PYTHONPATH=<repo>/src python -m smithhunter evaluate
+# note: `--quiet rules` must come after the targets (`-q` swallows the next words)
 ```

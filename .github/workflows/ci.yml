@@ -63,11 +63,13 @@ jobs:
           export PYTHONPATH=$PWD/src
           python -m smithhunter simulate --outdir sim_clean --reads 100000 --degradation 0
           cd sim_clean
+          sed -i 's/shuffles: 1000/shuffles: 200/' config/config.yaml   # CI time
           snakemake -s ../workflow/Snakefile --cores 2
-          snakemake -s ../workflow/Snakefile --cores 2 targets
+          snakemake -s ../workflow/Snakefile --cores 2 targets precursors
           python -m smithhunter evaluate | tee summary.txt
           grep -q "outcome as expected: .* (100%)" summary.txt
-          grep -q "Planted target sites found with their class (or better): 15/15" summary.txt
+          grep -q "Planted target sites found with their class (or better): 25/25" summary.txt
+          grep -q "Planted hairpins found .*: 1/1" summary.txt
       - name: Clean library, genome choice evil - every outcome must match the truth of that mode
         run: |
           export PYTHONPATH=$PWD/src
@@ -93,3 +95,4 @@ jobs:
             sim_*/evaluation
             sim_*/truth
             sim_*/results/targets
+            sim_*/results/precursors
