@@ -68,6 +68,16 @@ jobs:
           python -m smithhunter evaluate | tee summary.txt
           grep -q "outcome as expected: .* (100%)" summary.txt
           grep -q "Planted target sites found with their class (or better): 15/15" summary.txt
+      - name: Clean library, genome choice evil - every outcome must match the truth of that mode
+        run: |
+          export PYTHONPATH=$PWD/src
+          python -m smithhunter simulate --outdir sim_evil --reads 100000 --degradation 0 --mode evil
+          cd sim_evil
+          snakemake -s ../workflow/Snakefile --cores 2
+          python -m smithhunter evaluate | tee summary.txt
+          grep -q "Genome-choice mode of the run: evil (evil_max_diff 1)" summary.txt
+          grep -q "outcome as expected: .* (100%)" summary.txt
+          grep -q "smallRNAs without a passing locus after evil rejection: srna_numt_1mm$" summary.txt
       - name: Library with degradation (informative, does not fail)
         run: |
           export PYTHONPATH=$PWD/src
