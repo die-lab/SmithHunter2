@@ -182,6 +182,29 @@ def cmd_sites(args):
     print(f"{len(candidates)} candidates, {len(result[1])} sites, {len(result[2])} targets")
 
 
+def cmd_precursors(args):
+    from . import precursor as pc
+    if len(args.flanks) != 2 or min(args.flanks) < 0:
+        sys.exit("--flanks expects two non-negative integers: SHORT LONG")
+    ids = pc.read_candidate_ids(args.candidates) if args.candidates else None
+    candidates, unknown = pc.select_loci(args.loci, ids, args.anchor)
+    if unknown:
+        print(f"warning: {len(unknown)} candidates are not in {args.loci} and are skipped: "
+              f"{', '.join(unknown[:10])}{' ...' if len(unknown) > 10 else ''}", file=sys.stderr)
+    try:
+        contigs = pc.load_contigs(args.genomes, args.contigs,
+                                  {(c["genome"], c["contig"]) for c in candidates})
+        rows = pc.fold_candidates(candidates, contigs, args.temperature, tuple(sorted(args.flanks)),
+                                  args.shuffles, args.random_seed, args.threads, args.rnafold)
+    except (RuntimeError, ValueError) as err:
+        sys.exit(f"precursors: {err}")
+    write_tsv(args.out, rows, pc.COLUMNS)
+    best = [r for r in rows if r["best"]]
+    print(f"{len(candidates)} candidates, {len(rows)} windows folded at {args.temperature:g} C, "
+          f"{args.shuffles} shuffles each; best window is a single hairpin with the candidate "
+          f"in one arm for {sum(1 for r in best if r['single_hairpin'] and r['in_arm'])}")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="smithhunter", description=__doc__)
     p.add_argument("--version", action="version", version=__version__)
@@ -315,6 +338,25 @@ def main(argv=None):
     s.add_argument("--targets", required=True)
     s.add_argument("--fdr", required=True)
     s.set_defaults(func=cmd_sites)
+
+    s = sub.add_parser("precursors", help="fold two windows around each candidate (RNAfold)")
+    s.add_argument("--loci", required=True, help="loci.tsv of module A (coordinates)")
+    s.add_argument("--candidates", default="",
+                   help="FASTA whose ids select the loci (default: loci with pass = 1)")
+    s.add_argument("--genomes", required=True, help="reference/genomes.tsv")
+    s.add_argument("--contigs", required=True, help="reference/contigs.tsv")
+    s.add_argument("--temperature", type=float, required=True,
+                   help="folding temperature in Celsius (no default: v0 used 25)")
+    s.add_argument("--flanks", type=int, nargs=2, default=[15, 50], metavar=("SHORT", "LONG"))
+    s.add_argument("--shuffles", type=int, default=1000,
+                   help="dinucleotide shuffles per window for the p-value (0: none)")
+    s.add_argument("--anchor", default="representative", choices=["representative", "locus"],
+                   help="candidate interval: most abundant read or whole locus")
+    s.add_argument("--random-seed", type=int, default=1)
+    s.add_argument("--threads", type=int, default=1, help="RNAfold processes run at a time")
+    s.add_argument("--rnafold", default="RNAfold", help="RNAfold executable")
+    s.add_argument("--out", required=True)
+    s.set_defaults(func=cmd_precursors)
 
     s = sub.add_parser("funnel", help="reads left after each step, per sample")
     s.add_argument("--fastp", nargs="+", required=True, help="fastp JSON reports, one per sample")
