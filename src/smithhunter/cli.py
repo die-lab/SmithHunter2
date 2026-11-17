@@ -182,6 +182,30 @@ def cmd_sites(args):
     print(f"{len(candidates)} candidates, {len(result[1])} sites, {len(result[2])} targets")
 
 
+def cmd_score_sites(args):
+    from .targets.pipeline import read_candidates, read_decoys
+    from .targets.regions import read_regions
+    from .targets.score import run, write_scored
+    genomes = set(filter(None, args.genomes.split(","))) if args.genomes else set()
+    candidates = [(cid, seq) for cid, genome, seq in read_candidates(args.candidates)
+                  if not genomes or not genome or genome in genomes]
+    ids = {cid for cid, _ in candidates}
+    decoys = [d for d in read_decoys(args.decoys) if d[1] in ids]
+    predictors = [p for p in args.predictors.split(",") if p]
+    rows, targets, decoy_rows, curves, columns, classes, ranked = run(
+        candidates, decoys, read_regions(args.regions), args.sites, predictors,
+        parse_seed(args.seed), args.classes.split(",") if args.classes else None,
+        args.score_weak_sites, args.fdr, args.threads, args.context, args.temperature,
+        args.calibration_windows, args.random_seed)
+    write_scored(rows, targets, decoy_rows, curves, columns, classes, ranked,
+                 args.scored_sites, args.scored_targets, args.decoy_scores, args.curves)
+    scored = [r for r in rows if r["support"] != ""]
+    print(f"{len(scored)} of {len(rows)} sites scored, {len(decoy_rows)} decoy sites")
+    for n in range(len(ranked), 0, -1):
+        print(f"  sites with support >= {n} (q <= {args.fdr}): "
+              f"{sum(1 for r in scored if r['support'] >= n)}")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="smithhunter", description=__doc__)
     p.add_argument("--version", action="version", version=__version__)
@@ -315,6 +339,35 @@ def main(argv=None):
     s.add_argument("--targets", required=True)
     s.add_argument("--fdr", required=True)
     s.set_defaults(func=cmd_sites)
+
+    s = sub.add_parser("score-sites", help="IntaRNA / RNAhybrid scores of the seed sites, "
+                                           "decoy-based q-values, support")
+    s.add_argument("--candidates", required=True)
+    s.add_argument("--decoys", required=True)
+    s.add_argument("--regions", required=True)
+    s.add_argument("--sites", required=True, help="sites.tsv of the `sites` subcommand")
+    s.add_argument("--genomes", default="", help="only candidates of these genomes")
+    s.add_argument("--seed", default="2-8")
+    s.add_argument("--classes", default="")
+    s.add_argument("--predictors", default="intarna,rnahybrid")
+    s.add_argument("--score-weak-sites", action="store_true",
+                   help="also score 6mer and offset-6mer sites (many more sites)")
+    s.add_argument("--fdr", type=float, default=0.05, help="q-value threshold of `support`")
+    s.add_argument("--context", type=int, default=200,
+                   help="nt of the region kept on each side of a site for IntaRNA's "
+                        "accessibility (0: the whole region)")
+    s.add_argument("--temperature", type=float, default=None,
+                   help="IntaRNA temperature in Celsius (default 37; RNAhybrid has none)")
+    s.add_argument("--calibration-windows", type=int, default=2000,
+                   help="windows of the target regions used by RNAcalibrate "
+                        "(0: no calibration, RNAhybrid ranked by MFE)")
+    s.add_argument("--random-seed", type=int, default=1)
+    s.add_argument("--threads", type=int, default=1)
+    s.add_argument("--scored-sites", required=True)
+    s.add_argument("--scored-targets", required=True)
+    s.add_argument("--decoy-scores", required=True)
+    s.add_argument("--curves", required=True)
+    s.set_defaults(func=cmd_score_sites)
 
     s = sub.add_parser("funnel", help="reads left after each step, per sample")
     s.add_argument("--fastp", nargs="+", required=True, help="fastp JSON reports, one per sample")

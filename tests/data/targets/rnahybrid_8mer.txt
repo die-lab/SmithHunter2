@@ -1,0 +1,1 @@
+command_line:53:command_line:25:-16.3:0.003338:21:    G       CAGCGAGACU          A:     AAUGAUC          UGUAUUAACA :     UUAUUAG          AUAUAAUUGU :UAAUA       UUU                  
