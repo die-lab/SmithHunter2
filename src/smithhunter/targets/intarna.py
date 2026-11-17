@@ -1,16 +1,20 @@
-"""IntaRNA (>= 3) on one seed site: command builder and CSV parser.
+"""IntaRNA (>= 3) on one seed site: command builders and CSV parser.
 
 The interaction is anchored to the site found by the scan: the seed is pinned on the
 guide (``--seedQRange``) and on the target (``--seedTRange``), with as many base pairs
-as the site class has and no G:U pairs, and the interaction is confined to a window
-around the site (``--tRegion``).
+as the site class has and no G:U pairs. On the target the interaction may use the site
+and the stretch upstream of it where the 3' part of the guide pairs (``window``: guide
+length + ``FLANK`` nt upstream of the seed match, ``FLANK`` nt downstream).
 
 Accessibility (ED) is most of IntaRNA's run time and depends only on the target, so it
 is computed once per region on the whole region (``accessibility_command``) and reused
-for every small RNA and site. Each call then gets the region clipped to ``context`` nt
-on each side of the site with the matching slice of the ED table (``slice_accessibility``,
-``--tAcc E``): the energies are those of the whole region, the cost per site does not
-grow with the region length. ``context`` 0 passes the whole region.
+for every small RNA and site: each call gets the window only, with the matching slice of
+the ED table (``slice_accessibility``, ``--tAcc E``). The energies are those of the whole
+region (tested) at a cost per site that does not grow with region length.
+
+Every site gets a score: the cut-offs that make IntaRNA report nothing for weak
+interactions (``--outMaxE``, ``--seedMaxE``, both 0 by default) are lifted. Otherwise
+weak sites go missing and the decoy distribution is truncated.
 
 IntaRNA numbers sequence 1 = target, sequence 2 = query, positions from 1.
 """
@@ -41,13 +45,11 @@ def seed_pairing(site: Site, seed: tuple[int, int] = (2, 8)) -> tuple[int, int, 
     return a, b, site.start, site.end - 1
 
 
-def clip(target: str, site: Site, context: int) -> tuple[str, int]:
-    """Target clipped to ``context`` nt around the site, and the offset of the clip."""
-    if not context:
-        return target, 0
-    lo = max(0, min(site.start, site.t1) - context)
-    hi = min(len(target), max(site.end, site.t1 + 1) + context)
-    return target[lo:hi], lo
+def window(target: str, site: Site, guide_length: int, seed: tuple[int, int] = (2, 8),
+           flank: int = FLANK) -> tuple[int, int]:
+    """Stretch of the target (0-based, end excluded) the interaction may use."""
+    _, _, t_from, t_to = seed_pairing(site, seed)
+    return max(0, t_from - guide_length - flank), min(len(target), t_to + 2 + flank)
 
 
 def accessibility_command(guide: str, target: str, out_path: str,
@@ -80,20 +82,26 @@ def slice_accessibility(lines: list[str], lo: int, hi: int) -> str:
 
 
 def command(guide: str, target: str, site: Site, seed: tuple[int, int] = (2, 8),
-            context: int = 200, temperature: float | None = None,
-            binary: str = "IntaRNA", accessibility: str | None = None
-            ) -> tuple[list[str], int]:
-    """IntaRNA command for one site and the offset to add to its target positions
-    (1-based in the clipped target) to get 0-based region positions + 1."""
+            temperature: float | None = None, binary: str = "IntaRNA",
+            accessibility: str | None = None, clip: bool = True) -> tuple[list[str], int]:
+    """IntaRNA command for one site, and the offset to add to its target positions to
+    get positions in the region (1-based).
+
+    ``clip``: pass only the window (with ``accessibility``, the matching slice of the
+    region's ED table; without it IntaRNA computes ED on the window alone). Not clipped:
+    the whole region, with the window as ``--tRegion``.
+    """
     g_from, g_to, t_from, t_to = seed_pairing(site, seed)
-    clipped, offset = clip(target, site, context)
-    lo = max(1, t_from - offset + 1 - len(guide) - FLANK)
-    hi = min(len(clipped), t_to - offset + 1 + FLANK)
-    cmd = [binary, "-q", guide, "-t", clipped,
-           "--tRegion", f"{lo}-{hi}",
+    lo, hi = window(target, site, len(guide), seed)
+    if clip:
+        sequence, offset, region = target[lo:hi], lo, []
+    else:
+        sequence, offset, region = target, 0, ["--tRegion", f"{lo + 1}-{hi}"]
+    cmd = [binary, "-q", guide, "-t", sequence, *region,
            "--seedQRange", f"{g_from}-{g_to}",
            "--seedTRange", f"{t_from - offset + 1}-{t_to - offset + 1}",
            "--seedBP", str(g_to - g_from + 1), "--seedNoGU",
+           "--seedMaxE", "999", "--outMaxE", "999",
            "--outMode", "C", "--outCsvCols", ",".join(CSV_COLUMNS), "--threads", "1"]
     if accessibility:
         cmd += ["--tAcc", "E", "--tAccFile", accessibility]

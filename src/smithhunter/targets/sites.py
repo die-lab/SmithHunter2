@@ -57,7 +57,8 @@ def scan(guide: str, target: str, seed: tuple[int, int] = (2, 8),
         name = f"seed{a}-{b}"
         if len(pattern) != b - a + 1:
             return []
-        return [Site(i, i + len(pattern), i + len(pattern) + a - 1, name)
+        # t1: the target base opposite guide position 1
+        return [Site(i, i + len(pattern), i + len(pattern) + a - 2, name)
                 for i in occurrences(target, pattern)]
     if len(guide) < 8:
         return []

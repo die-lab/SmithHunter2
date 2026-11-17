@@ -145,8 +145,11 @@ nuclear genome even when it fit the focus genome better.
 Done in a cloud session (micromamba env, not on the server). Details and deviations from the
 design in `docs/module_b_design.md` section 10.
 - `score-sites` (rule `score_sites`, in target `targets`): IntaRNA + RNAhybrid per site, z-scores
-  against the candidate's own decoys, pooled q-values per class, `support`. Accessibility once per
-  region, sliced per site. RNAcalibrate without `-f` (with it ~25% of fits failed); p descriptive.
+  against the candidate's own decoys (decoys leave-one-decoy-out), pooled q-values per class with a
+  +1 decoy pseudo-count, `support`. Accessibility once per region, sliced to the interaction window;
+  IntaRNA cut-offs lifted so every site has a score. RNAcalibrate without `-f` (with it ~25% of fits
+  failed); p descriptive. `--estimate` for cost. An independent review (subagent) found the
+  self-standardised decoys made q-values too low; fixed and covered by a null-data test.
 - `precursors` (rule and subcommand, `precursor.py`): two windows, RNAfold, AMFE/MFEI, shuffle
   p-value ((k+1)/(n+1)), hairpin check. `precursors.temperature` is required (no default).
 - `shuffle.py`: the dinucleotide shuffle iterated over a set, so decoys depended on
@@ -161,8 +164,10 @@ design in `docs/module_b_design.md` section 10.
 - Simulator: one random stream per scenario group (`main`, `modes`, `module_b`), so new scenarios
   leave existing reads unchanged. New cases: NUMTs with 1 and 2 mismatches and a nuclear-expressed
   one (`--mode`, `--evil-max-diff`; truth per mode), 10 extended target sites (5 extensive, 5
-  supplementary), one hairpin. Clean run: 47/47 as expected in best/severe/evil, 25/25 sites,
-  hairpin 1/1; support >= 1 for 4/5 extensive, 0/5 supplementary, 0/15 seed-only, 1 of 5 calls false.
+  supplementary), one hairpin. Clean runs: 47/47 as expected in best/severe/evil, 25/25 sites,
+  hairpin 1/1. Seeds 1/2: support >= 1 for 2/5 and 3/5 extensive, 0 supplementary, 0 seed-only;
+  calls with support >= 1: 1 of 3 and 1 of 4 not planted; support 2: 0 of 3. Sensitivity is limited
+  by 20 decoys and ~50 real sites per class; A/U-rich small RNAs give weak duplexes.
 - Timing on the simulation (2 cores): score-sites ~1.7 min (218 real + 4560 decoy sites),
   precursors ~5 min (63 candidates, 1000 shuffles).
 
@@ -172,8 +177,9 @@ design in `docs/module_b_design.md` section 10.
    with `targets precursors`; then module B on `.test` (needs a target set: a nuclear genome + GFF3).
 2. Maintainer decisions: stricter evil (above); `severe`/`evil` discarding ties between two focus
    genomes; whether supplementary-pairing sites should be detectable (they are not now).
-3. Module B on a real UTRome: estimate cost first (sites per class x 21 sequences), consider
-   Snakemake scatter by candidate batches (design 4.4, not done).
+3. Module B on a real UTRome: `score-sites --estimate` first; Snakemake scatter by candidate
+   batches is needed before (design 4.4; review estimate ~54 core-hours for 20k UTRs x 100
+   candidates in one job). More decoys would sharpen q-values (cost x decoys).
 4. Bacterial mode (step 4), plots of module B in the report, a per-candidate summary joining A and B.
 5. Module A: run on a full-size real library to tune thresholds, then legacy comparison with v0.
    Optional tools later (MINTmap, Kraken2 on unmapped reads, ShortStack cross-check, AGO-CLIP).

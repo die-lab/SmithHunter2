@@ -270,7 +270,6 @@ targets:
   score_weak_sites: false            # 6mer and offset-6mer: listed, not scored
   # temperature: 25                  # IntaRNA, Celsius; default precursors.temperature,
                                      # else 37 (RNAhybrid has no temperature option)
-  # intarna_context: 200             # nt of the region around a site given to IntaRNA
   # calibration_windows: 2000        # RNAcalibrate sample; 0: rank RNAhybrid by MFE
 ```
 
@@ -315,20 +314,26 @@ Sites are then scored, and the decoys' sites go through the identical scoring:
   p-value is conservative. It is descriptive: q-values do not use it.
 
 Each energy is standardised against the candidate's own decoy sites (`<predictor>_z`,
-standard deviations from their mean; lower is better). Decoys share their candidate's
+standard deviations from their mean; lower is better; a decoy site is standardised
+against the other decoys, so that the decoys are a fair null for the real sites). Decoys share their candidate's
 length and composition, so this removes what composition does to energies: without it a
 GC-rich small RNA's decoys, pairing strongly with anything, hide the true sites of AT-rich
 ones. For each predictor and site class, real and decoy z-scores then give an empirical
 FDR: (decoy sites at or beyond the score / decoys per candidate) / real sites at or beyond
-it. `<predictor>_q` is that q-value pooled over candidates; `<predictor>_q_candidate` uses
+it, with one decoy site added to every count so that no q-value is 0. `<predictor>_q` is
+that q-value pooled over candidates; `<predictor>_q_candidate` uses
 only the candidate's own decoys, on the raw energy. `support` is the number of predictors
-with q ≤ `fdr`. Nothing is filtered out. A site that beats the decoys shows
+with q ≤ `fdr`. `support` ≥ 1 accepts a site that either predictor calls, so its false
+discovery rate can reach twice `fdr`; `support` 2 is the stricter call. Nothing is
+filtered out. A site that beats the decoys shows
 complementarity beyond chance, which is not proof of regulation.
 
-Run time: on the simulation (62 candidates, 20 decoys each, 50 3'UTRs, 7600 scored sites
-of real and decoy small RNAs) scoring takes about 1.5 minutes on 2 cores. It grows with
-the number of sites, so the first knob on a large UTRome is `score_weak_sites: false`
-(the default).
+Run time grows with the number of sites (about 45 ms per site for both predictors, plus
+the accessibility of each region with sites). Check first with
+`smithhunter score-sites ... --estimate`, which prints the sites per class (real and decoy)
+and a rough run time; on the simulation (4800 sites) scoring takes under 2 minutes on 2
+cores. The first knob on a large UTRome is `score_weak_sites: false` (the default). Real
+UTRomes can reach millions of sites; scoring runs in a single job for now.
 
 ## Precursor folding (module B)
 
@@ -375,7 +380,7 @@ Expect about 1.5 s per window on one core with 1000 shuffles.
 | `single_hairpin` | 1 if `stem_fraction` ≥ 0.8 |
 | `arm`, `in_arm` | `5p` / `3p`: the candidate bases paired in that stem-loop are all in one arm (`in_arm` = 1); `both`: it spans the loop; `NA`: none paired there |
 | `paired_fraction` | share of the candidate bases that are paired |
-| `best` | 1 for the window with the lower p-value (then lower MFE, then `3p`) |
+| `best` | 1 for the window with the lower p-value (then lower MFE, then `3p`). Its p-value is the smaller of two: on random sequence about 2 × the nominal rate passes |
 
 Two windows are tested per candidate, so roughly 10% of random sequences have a
 window with p ≤ 0.05: read the p-value together with the hairpin columns.
@@ -407,12 +412,14 @@ the decoys), and sites with pairing beyond the seed for 10 (`extensive`: guide 2
 12 to the end; `supplementary`: guide 2–8 and 13–16), which should. One small RNA sits in
 the 5' arm of a hairpin (21 bp stem). Run `snakemake ... targets precursors` before
 `evaluate` to get the recovery of the planted sites, their support, the share of calls
-that are not planted, and whether the hairpin is found. On the clean simulation (seed
-1): every planted site is found with its class; support ≥ 1 for 4 of 5 `extensive` sites
-(2 with both predictors), 0 of 5 `supplementary` and 0 of 15 seed-only sites; 1 of the 5
-called sites is not planted. The missed `extensive` site belongs to an almost pure A/U
-small RNA, whose 17-bp duplex is weak (z = −2) compared with the chance pairing of its
-own decoys.
+that are not planted, and whether the hairpin is found. On the clean simulation, seeds
+1 and 2: every planted site is found with its class; support ≥ 1 for 2/5 and 3/5
+`extensive` sites (0 and 3 with both predictors), none of the `supplementary` or
+seed-only sites; 1 of 3 and 1 of 4 calls with support ≥ 1 are not planted, none of the 3
+calls with support 2. Missed `extensive` sites belong to A/U-rich small RNAs, whose
+duplexes are weak next to the chance pairing of their own decoys. With 20 decoys and
+about 50 real sites per class, the q-values are coarse: on small candidate sets, read
+`<predictor>_z` and the per-site scores, not only `support`.
 
 `smithhunter simulate --help` lists the options (number of samples and reads, genome
 sizes, degradation level, error rate, paired-end reads, seed). `evaluate` reports for

@@ -15,7 +15,9 @@ from smithhunter.targets import intarna, rnahybrid
 from smithhunter.targets.fdr import qvalues
 from smithhunter.targets.pipeline import run_sites
 from smithhunter.targets.regions import Region, revcomp
-from smithhunter.targets.score import (Job, add_qvalues, collect_jobs, run_scoring,
+from statistics import mean, pstdev
+
+from smithhunter.targets.score import (Job, add_qvalues, collect_jobs, run_scoring, standardise,
                                        scored_classes)
 from smithhunter.targets.sites import Site, scan
 
@@ -49,22 +51,26 @@ def test_seed_pairing_other_seed_range():
     assert intarna.seed_pairing(site, (4, 10)) == (4, 10, 4, 10)
 
 
-def test_intarna_command_pins_seed_and_clips_context():
-    cmd, offset = intarna.command(GUIDE, TARGET, SITE, context=50)
+def test_intarna_command_pins_seed_and_clips_to_the_window():
+    cmd, offset = intarna.command(GUIDE, TARGET, SITE)
     opt = {cmd[i]: cmd[i + 1] for i in range(1, len(cmd) - 1) if cmd[i].startswith("-")}
-    clipped = opt["-t"]
-    assert offset == SITE.start - 50 and clipped == TARGET[offset:SITE.t1 + 1 + 50]
+    lo, hi = intarna.window(TARGET, SITE, len(GUIDE))
+    # the window: guide length + 15 nt upstream of the seed match, 15 nt past t1
+    assert lo == SITE.t1 - 7 - len(GUIDE) - 15 and hi == min(len(TARGET), SITE.t1 + 1 + 15)
+    assert offset == lo and opt["-t"] == TARGET[lo:hi] and "--tRegion" not in cmd
     assert opt["--seedQRange"] == "2-8" and opt["--seedBP"] == "7" and "--seedNoGU" in cmd
+    assert opt["--outMaxE"] == "999" and opt["--seedMaxE"] == "999"   # every site scored
     a, b = (int(x) for x in opt["--seedTRange"].split("-"))
-    assert clipped[a - 1:b] == revcomp(GUIDE[1:8])
-    lo, hi = (int(x) for x in opt["--tRegion"].split("-"))
-    assert 1 <= lo <= a and b <= hi <= len(clipped)
-    whole, no_offset = intarna.command(GUIDE, TARGET, SITE, context=0, temperature=25)
+    assert opt["-t"][a - 1:b] == revcomp(GUIDE[1:8])
+    whole, no_offset = intarna.command(GUIDE, TARGET, SITE, temperature=25, clip=False)
     assert no_offset == 0 and whole[4] == TARGET and whole[-2:] == ["--temperature", "25"]
+    assert whole[whole.index("--tRegion") + 1] == f"{lo + 1}-{hi}"
+    a, b = (int(x) for x in whole[whole.index("--seedTRange") + 1].split("-"))
+    assert TARGET[a - 1:b] == revcomp(GUIDE[1:8])
 
 
 def test_intarna_parser_on_stored_output():
-    _, offset = intarna.command(GUIDE, TARGET, SITE, context=CASE["intarna_context"])
+    offset = SITE.start - CASE["intarna_context"]   # the fixture was run on a clipped target
     got = intarna.parse_csv((DATA / "intarna_8mer.csv").read_text(), offset)
     assert got["intarna_E"] == -6.51 and got["intarna_E_hybrid"] == -10.9
     assert got["intarna_ED_target"] == 3.1 and got["intarna_ED_query"] == 1.29
@@ -113,6 +119,7 @@ def test_rnahybrid_parser_on_stored_output():
     text = (DATA / "rnahybrid_8mer.txt").read_text()
     got = rnahybrid.parse_compact(text, SITE, CASE["window_offset"])
     assert got["rnahybrid_mfe"] == -16.3 and got["rnahybrid_p"] == 0.003338
+    assert got["rnahybrid_duplex"].count("|") == 3
     assert got["rnahybrid_pairs"] == 17 and got["rnahybrid_on_site"] == 1
     assert got["rnahybrid_target"] == "124-150"  # same stretch as IntaRNA finds
     assert rnahybrid.parse_compact(text, SITE, CASE["window_offset"],
@@ -149,45 +156,77 @@ def job(gid, cls="8mer", start=0, decoy=False, cand="c1"):
     return Job(gid, cand, decoy, "ACGT", 0, start, start + 8, start + 7, cls)
 
 
+def test_standardise_leaves_one_decoy_out():
+    decoys = [job(f"c1__d{i:02d}", start=i, decoy=True) for i in range(25)]
+    real = job("c1", start=99)
+    values = [float(-5 - (i % 5)) for i in range(25)]          # -5 ... -9
+    scores = {j: {"intarna_E": v} for j, v in zip(decoys, values)}
+    scores[real] = {"intarna_E": -20.0}
+    standardise(decoys + [real], scores, "intarna", "intarna_E")
+    m, sd = mean(values), pstdev(values)
+    assert scores[real]["intarna_z"] == pytest.approx((-20 - m) / sd, abs=1e-3)
+    rest = values[1:]
+    assert scores[decoys[0]]["intarna_z"] == pytest.approx(
+        (values[0] - mean(rest)) / pstdev(rest), abs=1e-3)
+    # fewer than MIN_DECOY_SCORES decoy scores: no z at all
+    few = {j: {"intarna_E": v} for j, v in zip(decoys[:10], values)}
+    standardise(decoys[:10], few, "intarna", "intarna_E")
+    assert all("intarna_z" not in v for v in few.values())
+
+
+def test_leave_one_out_keeps_the_null_calibrated():
+    """Real sites of no interest drawn from the decoy distribution: with the decoys
+    standardising themselves they would pass more often than the decoys do."""
+    import random
+    rng = random.Random(5)
+    false_calls = calls = 0
+    for rep in range(40):
+        jobs, scores = [], {}
+        for c in range(10):
+            for d in range(21):
+                j = job(f"c{c}__d{d}", start=d, decoy=True, cand=f"c{c}")
+                jobs.append(j)
+                scores[j] = {"intarna_E": rng.gauss(-8, 2)}
+            j = job(f"c{c}", start=50, cand=f"c{c}")
+            jobs.append(j)
+            scores[j] = {"intarna_E": rng.gauss(-8, 2)}
+        add_qvalues(jobs, scores, {"intarna": "intarna_E"}, n_decoys=21, fdr=0.1)
+        hits = sum(1 for j in jobs if not j.decoy and scores[j]["intarna_q"] <= 0.1)
+        false_calls += hits
+        calls += hits
+    assert false_calls <= 4   # all null: q <= 0.1 should almost never happen
+
+
 def test_standardised_qvalues_per_class_candidate_and_support():
-    """An AT-rich candidate (weak energies) and a GC-rich one (strong energies), five
-    decoy sites each: on raw energies the GC-rich decoys would hide the AT-rich site that
-    clearly beats its own decoys; standardised, it stands out and the GC-rich site that
-    is average for its decoys does not."""
-    at_real = [job("c1", start=0), job("c1", start=1)]
-    gc_real = [job("c2", start=2, cand="c2")]
-    at_decoys = [job(f"c1__d{i}", start=10 + i, decoy=True) for i in range(5)]
-    gc_decoys = [job(f"c2__d{i}", start=20 + i, decoy=True, cand="c2") for i in range(5)]
-    seven = job("c1", "7mer-m8", start=30)
-    few = [job("c3", start=40, cand="c3")] + \
-        [job(f"c3__d{i}", start=41 + i, decoy=True, cand="c3") for i in range(2)]
-    energies = {at_real[0]: -9.0, at_real[1]: -5.0, gc_real[0]: -15.0, seven: -7.0,
-                **dict(zip(at_decoys, [-4.0, -5.0, -6.0, -5.0, -5.0])),
-                **dict(zip(gc_decoys, [-14.0, -15.0, -16.0, -15.0, -15.0])),
-                **dict(zip(few, [-30.0, -1.0, -2.0]))}
+    """An AT-rich candidate (weak energies) and a GC-rich one (strong energies), 20
+    decoys with one site each: on raw energies the GC-rich decoys would hide the AT-rich
+    site that clearly beats its own decoys; standardised, it stands out and the GC-rich
+    site that is average for its decoys does not."""
+    spread = [-1.0, 0.0, 1.0, 0.0, 0.0] * 4 + [0.0]
+    at_decoys = [job(f"c1__d{i:02d}", start=10 + i, decoy=True) for i in range(21)]
+    gc_decoys = [job(f"c2__d{i:02d}", start=40 + i, decoy=True, cand="c2") for i in range(21)]
+    at_real, gc_real = job("c1", start=0), job("c2", start=2, cand="c2")
+    seven = job("c1", "7mer-m8", start=90)
+    energies = {at_real: -9.0, gc_real: -15.0, seven: -7.0,
+                **{j: -5.0 + d for j, d in zip(at_decoys, spread)},
+                **{j: -15.0 + d for j, d in zip(gc_decoys, spread)}}
     jobs = list(energies)
     scores = {j: {"intarna_E": e} for j, e in energies.items()}
-    curves = add_qvalues(jobs, scores, {"intarna": "intarna_E"}, n_decoys=5, fdr=0.05)
-    sd = 0.4 ** 0.5
-    assert scores[at_real[0]]["intarna_z"] == pytest.approx(-4 / sd, abs=1e-3)
-    assert scores[gc_real[0]]["intarna_z"] == 0.0
-    # pooled on z: nothing beats the AT-rich site; 8 decoy sites (1.6 per candidate)
-    # reach z = 0, where there are 3 real sites
-    assert scores[at_real[0]]["intarna_q"] == 0.0 and scores[at_real[0]]["support"] == 1
-    assert scores[gc_real[0]]["intarna_q"] == pytest.approx(1.6 / 3, abs=1e-6) and scores[gc_real[0]]["support"] == 0
-    # raw energies pooled would have given the AT-rich site a q of (5 / 5) / 2
-    assert qvalues([-9.0, -5.0, -15.0], [-4, -5, -6, -5, -5, -14, -15, -16, -15, -15],
-                   5)[0] == pytest.approx(0.5, abs=1e-6)
-    # per candidate, on raw energies
-    assert scores[at_real[0]]["intarna_q_candidate"] == 0.0
+    curves = add_qvalues(jobs, scores, {"intarna": "intarna_E"}, n_decoys=21, fdr=0.1)
+    assert scores[at_real]["intarna_z"] < -5 and abs(scores[gc_real]["intarna_z"]) < 0.01
+    # no decoy reaches the AT-rich site: q = (0 + 1) / 21 / 1
+    assert scores[at_real]["intarna_q"] == pytest.approx(1 / 21, abs=1e-6)
+    assert scores[at_real]["support"] == 1
+    assert scores[gc_real]["intarna_q"] > 0.5 and scores[gc_real]["support"] == 0
+    # raw energies pooled: 21 GC-rich decoys at or below -9, q = (21 + 1) / 21 / 2
+    assert qvalues([-9.0, -15.0], [energies[j] for j in at_decoys + gc_decoys], 21,
+                   pseudo=1)[0] == pytest.approx(22 / 42, abs=1e-6)
+    assert scores[at_real]["intarna_q_candidate"] == pytest.approx(1 / 21, abs=1e-6)
     # classes are separate: the 7mer has no decoy site in its class
-    assert scores[seven]["intarna_q"] == 0.0
-    # too few decoy scores: no z, no pooled q, but a per-candidate q
-    assert "intarna_z" not in scores[few[0]] and "intarna_q" not in scores[few[0]]
-    assert scores[few[0]]["intarna_q_candidate"] == 0.0 and scores[few[0]]["support"] == 0
+    assert scores[seven]["intarna_q"] == pytest.approx(1 / 21, abs=1e-6)
     assert "support" not in scores[at_decoys[0]]
     top = [c for c in curves if c["site_class"] == "8mer"]
-    assert [(c["real_sites"], c["decoy_sites"]) for c in top] == [(1, 0), (3, 8)]
+    assert top[0]["real_sites"] == 1 and top[0]["decoy_sites"] == 0
     assert all(c["score"] == "intarna_z" for c in top)
 
 
@@ -208,7 +247,7 @@ def fake_pipeline(score_weak=False):
                Region("t2|u", "t2", "g1", "three_prime_UTR", utr),     # isoform, same UTR
                Region("t3|u", "t3", "g2", "three_prime_UTR", "GGCGG" * 8 + h28 + "CGG")]
     candidates = [("c1", guide)]
-    decoys = [(f"c1__decoy{i:03d}", "c1", decoy_seq) for i in range(1, 6)]
+    decoys = [(f"c1__decoy{i:03d}", "c1", decoy_seq) for i in range(1, 26)]
     decoys.append(("c1__decoy006", "c1", "TTTTTTTTTTTTTTTTTTTTTT"))
     _, site_rows, _, _ = run_sites(candidates, decoys, regions)
     site_rows = [{k: str(v) for k, v in r.items()} for r in site_rows]
@@ -217,7 +256,7 @@ def fake_pipeline(score_weak=False):
     def make(unique):
         def predict_all(jobs, threads):
             calls.extend(jobs)
-            return [{"intarna_E": -5.0 - 0.1 * int(j.guide_id[-1]) if j.decoy
+            return [{"intarna_E": -5.0 - 0.1 * int(j.guide_id[-2:]) if j.decoy
                      else -15.0 - j.target}
                     for j in jobs]
         return predict_all
@@ -235,7 +274,7 @@ def test_run_scoring_shares_scores_between_isoforms():
     by = {(r["transcript"], r["site_class"]): r for r in rows}
     assert by[("t1", "8mer")]["intarna_E"] == by[("t2", "8mer")]["intarna_E"] == -15.0
     assert by[("t3", "7mer-m8")]["intarna_E"] == -16.0
-    assert by[("t1", "8mer")]["intarna_q"] == 0.0 and by[("t1", "8mer")]["support"] == 1
+    assert by[("t1", "8mer")]["intarna_q"] < 0.05 and by[("t1", "8mer")]["support"] == 1
     # the 6mer is listed but not scored
     assert by[("t1", "6mer")]["intarna_E"] == "" and by[("t1", "6mer")]["support"] == ""
     assert all(r["decoy"].startswith("c1__decoy") for r in decoy_rows)
@@ -261,10 +300,10 @@ def test_collect_jobs_ignores_decoys_of_other_candidates():
 def test_real_tools_agree_with_stored_outputs():
     from smithhunter.targets.score import calibrate, intarna_predictor, rnahybrid_predictor
     j = Job("g", "g", False, GUIDE, 0, SITE.start, SITE.end, SITE.t1, SITE.site_class)
-    got, = intarna_predictor([TARGET], (2, 8), CASE["intarna_context"], None)([j], 1)
+    got, = intarna_predictor([TARGET], (2, 8), None)([j], 1)
     assert got["intarna_target"].endswith("-150") and got["intarna_E"] < -5
     # the sliced accessibility table gives exactly what IntaRNA computes on the whole region
-    cmd, offset = intarna.command(GUIDE, TARGET, SITE, context=0)
+    cmd, offset = intarna.command(GUIDE, TARGET, SITE, clip=False)
     import subprocess
     whole = intarna.parse_csv(subprocess.run(cmd, capture_output=True, text=True).stdout, offset)
     assert got == whole
@@ -273,8 +312,8 @@ def test_real_tools_agree_with_stored_outputs():
     site = Site(*(x + 2 * len(TARGET) for x in CASE["site"][:3]), SITE.site_class)
     assert site in scan(GUIDE, long)
     jl = Job("g", "g", False, GUIDE, 0, site.start, site.end, site.t1, site.site_class)
-    sliced, = intarna_predictor([long], (2, 8), 100, None)([jl], 1)
-    cmd, offset = intarna.command(GUIDE, long, site, context=0)
+    sliced, = intarna_predictor([long], (2, 8), None)([jl], 1)
+    cmd, offset = intarna.command(GUIDE, long, site, clip=False)
     assert sliced == intarna.parse_csv(
         subprocess.run(cmd, capture_output=True, text=True).stdout, offset)
     params = calibrate({"g": GUIDE}, [TARGET * 20], 300, 1, 1)
@@ -282,3 +321,11 @@ def test_real_tools_agree_with_stored_outputs():
     hyb, = rnahybrid_predictor([TARGET], (2, 8), params)([j], 1)
     assert hyb["rnahybrid_mfe"] == pytest.approx(-16.3, abs=0.05)
     assert hyb["rnahybrid_on_site"] == 1 and 0 <= hyb["rnahybrid_p"] <= 1
+    # a weak site still gets an IntaRNA score (cut-offs lifted)
+    weak = "C" * 40 + "G" + revcomp(GUIDE[1:7]) + "A" + "C" * 40
+    ws = next(x for x in scan(GUIDE, weak) if x.site_class == "7mer-A1")
+    jw = Job("g", "g", False, GUIDE, 0, ws.start, ws.end, ws.t1, ws.site_class)
+    assert intarna_predictor([weak], (2, 8), None)([jw], 1)[0]["intarna_E"] > -5
+    from smithhunter.targets.score import run
+    assert run([], [], [], str(DATA / "empty_sites.tsv"), ["intarna", "rnahybrid"],
+               log=lambda m: None)[0] == []

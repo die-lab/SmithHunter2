@@ -6,7 +6,8 @@ isoforms sharing a region sequence share the score and count once for the FDR.
 
 For each predictor and site class, real and decoy standardised scores are pooled and each
 real site gets a q-value: the lowest FDR among the thresholds it passes, with
-FDR = (decoy sites passing / decoys per candidate) / real sites passing. A second
+FDR = ((decoy sites passing + 1) / decoys per candidate) / real sites passing (the + 1
+keeps a q-value from being 0 when no decoy passes, which 20 decoys cannot show). A second
 q-value uses only the candidate's own sites and decoys. ``support`` is the number of
 predictors with pooled q <= ``fdr``. Nothing is filtered: every score stays in the table.
 
@@ -27,7 +28,6 @@ import subprocess
 import sys
 import tempfile
 from bisect import bisect_right
-from statistics import mean, pstdev
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -45,7 +45,7 @@ SCORE_COLUMNS = {
     "intarna": ["intarna_E", "intarna_z", "intarna_E_hybrid", "intarna_ED_target",
                 "intarna_ED_query", "intarna_target", "intarna_guide", "intarna_duplex"],
     "rnahybrid": ["rnahybrid_mfe", "rnahybrid_z", "rnahybrid_p", "rnahybrid_target",
-                  "rnahybrid_pairs", "rnahybrid_on_site"],
+                  "rnahybrid_pairs", "rnahybrid_on_site", "rnahybrid_duplex"],
 }
 
 
@@ -101,7 +101,7 @@ def require(binary: str) -> None:
                  "targets.predictors.")
 
 
-def intarna_predictor(unique: list[str], seed, context: int, temperature):
+def intarna_predictor(unique: list[str], seed, temperature):
     """Jobs -> scores. The accessibility of each region is computed once and sliced for
     each of its sites (see ``intarna``)."""
     require("IntaRNA")
@@ -124,12 +124,12 @@ def intarna_predictor(unique: list[str], seed, context: int, temperature):
 
             def one(k: int, lines: list[str]) -> dict:
                 job = jobs[k]
-                clipped, lo = intarna.clip(unique[job.target], job.site, context)
+                lo, hi = intarna.window(unique[job.target], job.site, len(job.guide), seed)
                 path = os.path.join(tmp, f"job{k}")
                 with open(path, "w") as fh:
-                    fh.write(intarna.slice_accessibility(lines, lo, lo + len(clipped)))
+                    fh.write(intarna.slice_accessibility(lines, lo, hi))
                 cmd, offset = intarna.command(job.guide, unique[job.target], job.site, seed,
-                                              context, temperature, accessibility=path)
+                                              temperature, accessibility=path)
                 try:
                     return intarna.parse_csv(run_tool(cmd), offset)
                 finally:
@@ -152,6 +152,8 @@ def calibrate(guides: dict[str, str], unique: list[str], n_windows: int,
     """Extreme value parameters (xi, theta) of each small RNA, from RNAcalibrate on
     windows sampled from the target regions."""
     require("RNAcalibrate")
+    if not guides:
+        return {}
     longest = max(len(g) for g in guides.values())
     length = longest + 2 * rnahybrid.FLANK + 9
     windows = rnahybrid.calibration_windows(unique, length, n_windows, random_seed)
@@ -189,8 +191,11 @@ def rnahybrid_predictor(unique: list[str], seed, params: dict[str, tuple[float, 
         return rnahybrid.parse_compact(out, job.site, offset, seed, with_pvalue=par is not None)
 
     def predict_all(jobs: list[Job], threads: int = 1) -> list[dict]:
+        out: list[dict] = []
         with ThreadPoolExecutor(max_workers=max(1, threads)) as pool:
-            return list(pool.map(predict, jobs))
+            for i in range(0, len(jobs), CHUNK):   # bounded number of pending calls
+                out.extend(pool.map(predict, jobs[i:i + CHUNK]))
+        return out
     return predict_all
 
 
@@ -204,32 +209,57 @@ def score_jobs(jobs: list[Job], predictors: dict, threads: int = 1) -> dict[Job,
     return scores
 
 
-MIN_DECOY_SCORES = 5
+MIN_DECOY_SCORES = 20
+CHUNK = 10000
 
 
 def standardise(jobs: list[Job], scores: dict[Job, dict], predictor: str, column: str) -> None:
-    """Add ``<predictor>_z``: the score in standard deviations from the mean of the scores
-    of the candidate's own decoy sites (all classes). Lower is better, as for energies.
+    """Add ``<predictor>_z``: the score in standard deviations from the mean of the
+    candidate's decoy sites (all classes). Lower is better, as for energies.
 
     Decoys have the length and dinucleotide composition of their candidate, so this takes
     out what composition does to the energies (a GC-rich small RNA pairs more strongly
     with anything). Without it, pooling raw energies over candidates lets the decoys of
-    GC-rich candidates hide the true sites of AT-rich ones. A candidate with fewer than
-    ``MIN_DECOY_SCORES`` decoy scores, or with all of them equal, gets no z.
+    GC-rich candidates hide the true sites of AT-rich ones.
+
+    A real site is measured against all of its candidate's decoys; a decoy site against
+    the other decoys only (leave one decoy out). Otherwise the decoys would set their own
+    scale, their z-scores could not reach the tail that a real site of no interest
+    reaches, and the q-values would be too low. A candidate with fewer than
+    ``MIN_DECOY_SCORES`` decoy scores once any one decoy is left out gets no z (neither its
+    real nor its decoy sites), nor does a site whose reference scores are all equal.
     """
-    decoy_values: dict[str, list[float]] = defaultdict(list)
-    for j in jobs:
-        if j.decoy and scores[j].get(column, "") != "":
-            decoy_values[j.candidate].append(scores[j][column])
-    stats = {}
-    for cid, values in decoy_values.items():
-        if len(values) >= MIN_DECOY_SCORES and pstdev(values) > 0:
-            stats[cid] = (mean(values), pstdev(values))
+    # sums per candidate and per decoy, so that leaving one decoy out is a subtraction
+    total: dict[str, list[float]] = defaultdict(lambda: [0, 0.0, 0.0])
+    own: dict[str, list[float]] = defaultdict(lambda: [0, 0.0, 0.0])
     for j in jobs:
         value = scores[j].get(column, "")
-        if value != "" and j.candidate in stats:
-            m, sd = stats[j.candidate]
-            scores[j][f"{predictor}_z"] = round((value - m) / sd, 4)
+        if j.decoy and value != "":
+            for acc in (total[j.candidate], own[j.guide_id]):
+                acc[0] += 1
+                acc[1] += value
+                acc[2] += value * value
+    # a candidate is standardised only if every one of its decoys can be, so that its
+    # real sites never face a pool without its decoys
+    largest: dict[str, float] = defaultdict(float)
+    for j in jobs:
+        if j.decoy and j.guide_id in own:
+            largest[j.candidate] = max(largest[j.candidate], own[j.guide_id][0])
+    eligible = {c for c, (n, _, _) in total.items() if n - largest[c] >= MIN_DECOY_SCORES}
+    for j in jobs:
+        value = scores[j].get(column, "")
+        if value == "" or j.candidate not in eligible:
+            continue
+        n, s1, s2 = total[j.candidate]
+        if j.decoy:
+            n, s1, s2 = n - own[j.guide_id][0], s1 - own[j.guide_id][1], s2 - own[j.guide_id][2]
+        if n < MIN_DECOY_SCORES:
+            continue
+        m = s1 / n
+        var = s2 / n - m * m
+        if var <= 1e-12:
+            continue
+        scores[j][f"{predictor}_z"] = round((value - m) / var ** 0.5, 4)
 
 
 def add_qvalues(jobs: list[Job], scores: dict[Job, dict], ranked: dict[str, str],
@@ -251,7 +281,7 @@ def add_qvalues(jobs: list[Job], scores: dict[Job, dict], ranked: dict[str, str]
             have = [j for j in group if scores[j].get(z, "") != ""]
             real = [j for j in have if not j.decoy]
             decoy = [scores[j][z] for j in have if j.decoy]
-            q = qvalues([scores[j][z] for j in real], decoy, n_decoys)
+            q = qvalues([scores[j][z] for j in real], decoy, n_decoys, pseudo=1)
             for j, value in zip(real, q):
                 scores[j][f"{predictor}_q"] = value
             per_candidate: dict[str, list[Job]] = defaultdict(list)
@@ -262,14 +292,14 @@ def add_qvalues(jobs: list[Job], scores: dict[Job, dict], ranked: dict[str, str]
                 mine = [j for j in members if not j.decoy]
                 theirs = [scores[j][column] for j in members if j.decoy]
                 for j, value in zip(mine, qvalues([scores[j][column] for j in mine], theirs,
-                                                  n_decoys)):
+                                                  n_decoys, pseudo=1)):
                     scores[j][f"{predictor}_q_candidate"] = value
             real_scores = sorted(scores[j][z] for j in real)
             decoy.sort()
             for threshold in sorted(set(real_scores)):
                 n_real = bisect_right(real_scores, threshold)
                 n_decoy = bisect_right(decoy, threshold)
-                expected = n_decoy / max(1, n_decoys)
+                expected = (n_decoy + 1) / max(1, n_decoys)
                 curves.append({"predictor": predictor, "score": z, "site_class": cls,
                                "threshold": threshold, "real_sites": n_real,
                                "decoy_sites": n_decoy, "expected_false": round(expected, 3),
@@ -376,8 +406,32 @@ def write_scored(site_rows, target_rows, decoy_rows, curves, score_columns, clas
     write_tsv(curves_path, curves, CURVE_COLUMNS)
 
 
+SECONDS_PER_JOB = 0.045   # IntaRNA + RNAhybrid per site, measured on the simulation
+SECONDS_PER_KB = 0.7      # IntaRNA accessibility table, per kb of region with sites
+
+
+def estimate(candidates, decoys, regions, seed=(2, 8), classes=None,
+             score_weak=False) -> str:
+    """Sites to score per class (real and decoy) and a rough single-core run time."""
+    classes = tuple(classes or site_classes(seed))
+    wanted = scored_classes(classes, score_weak)
+    unique = list(dict.fromkeys(r.sequence for r in regions))
+    jobs = collect_jobs(candidates, decoys, unique, seed, classes)
+    lines = ["class\treal_sites\tdecoy_sites\tscored"]
+    for c in classes:
+        real = sum(1 for j in jobs if j.site_class == c and not j.decoy)
+        decoy = sum(1 for j in jobs if j.site_class == c and j.decoy)
+        lines.append(f"{c}\t{real}\t{decoy}\t{'yes' if c in wanted else 'no'}")
+    scored = [j for j in jobs if j.site_class in wanted]
+    kb = sum(len(unique[t]) for t in {j.target for j in scored}) / 1000
+    hours = (len(scored) * SECONDS_PER_JOB + kb * SECONDS_PER_KB) / 3600
+    lines.append(f"{len(scored)} sites to score on {kb:.0f} kb of regions: about "
+                 f"{hours:.1f} core-hours with both predictors (rough)")
+    return "\n".join(lines)
+
+
 def run(candidates, decoys, regions, sites_path: str, wanted: list[str], seed=(2, 8),
-        classes=None, score_weak=False, fdr=0.05, threads=1, context=200, temperature=None,
+        classes=None, score_weak=False, fdr=0.05, threads=1, temperature=None,
         calibration_windows=2000, random_seed=1, log=print):
     """Entry point of ``score-sites``: build the predictors and score everything."""
     unknown = set(wanted) - set(PREDICTORS)
@@ -387,8 +441,7 @@ def run(candidates, decoys, regions, sites_path: str, wanted: list[str], seed=(2
     ranked = {p: RANKED[p] for p in PREDICTORS if p in wanted}
     predictors = {}
     if "intarna" in wanted:
-        predictors["intarna"] = lambda unique: intarna_predictor(unique, seed, context,
-                                                                 temperature)
+        predictors["intarna"] = lambda unique: intarna_predictor(unique, seed, temperature)
     if "rnahybrid" in wanted:
         params = None
         if calibration_windows:

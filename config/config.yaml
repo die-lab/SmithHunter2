@@ -112,7 +112,6 @@ targets:
   score_weak_sites: false                          # 6mer, offset-6mer: listed, not scored
   # temperature: 25         # IntaRNA, Celsius; default: precursors.temperature, else 37.
   #                         # RNAhybrid has no temperature option (37 C parameters).
-  # intarna_context: 200    # nt of the region on each side of a site given to IntaRNA
   # calibration_windows: 2000  # RNAcalibrate sample of the regions; 0 -> rank by MFE
 
 # ---------------------------------------------------------------------------------------

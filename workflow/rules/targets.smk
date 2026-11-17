@@ -101,8 +101,7 @@ def score_args(wildcards):
     temperature = TARGETS_CFG.get("temperature", folding.get("temperature"))
     if temperature is not None:
         args.append(f"--temperature {temperature}")
-    for key, flag in (("fdr", "--fdr"), ("intarna_context", "--context"),
-                      ("calibration_windows", "--calibration-windows")):
+    for key, flag in (("fdr", "--fdr"), ("calibration_windows", "--calibration-windows")):
         if TARGETS_CFG.get(key) is not None:
             args.append(f"{flag} {TARGETS_CFG[key]}")
     return " ".join(args)

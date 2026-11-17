@@ -22,6 +22,7 @@ from __future__ import annotations
 import math
 import random
 
+from . import intarna
 from .intarna import seed_pairing
 from .sites import Site
 
@@ -30,10 +31,8 @@ FLANK = 15
 
 def window(target: str, site: Site, guide_length: int, seed: tuple[int, int] = (2, 8),
            flank: int = FLANK) -> tuple[str, int]:
-    """Window of the target around the site and its offset in the region."""
-    _, _, t_from, t_to = seed_pairing(site, seed)
-    lo = max(0, t_from - guide_length - flank)
-    hi = min(len(target), t_to + 2 + flank)
+    """Window of the target around the site (the one IntaRNA gets) and its offset."""
+    lo, hi = intarna.window(target, site, guide_length, seed, flank)
     return target[lo:hi], lo
 
 
@@ -93,6 +92,7 @@ def parse_compact(text: str, site: Site, offset: int, seed: tuple[int, int] = (2
         "rnahybrid_target": f"{min(t_span) + offset}-{max(t_span) + offset}" if pairs else "",
         "rnahybrid_pairs": len(pairs),
         "rnahybrid_on_site": int(partner is not None and partner + offset == t_to + 1),
+        "rnahybrid_duplex": "|".join(f[7:11]),
     }
 
 

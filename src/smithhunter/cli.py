@@ -193,10 +193,19 @@ def cmd_score_sites(args):
     ids = {cid for cid, _ in candidates}
     decoys = [d for d in read_decoys(args.decoys) if d[1] in ids]
     predictors = [p for p in args.predictors.split(",") if p]
+    classes = args.classes.split(",") if args.classes else None
+    regions = read_regions(args.regions)
+    if args.estimate:
+        from .targets.score import estimate
+        print(estimate(candidates, decoys, regions, parse_seed(args.seed), classes,
+                       args.score_weak_sites))
+        return
+    if not all((args.scored_sites, args.scored_targets, args.decoy_scores, args.curves)):
+        sys.exit("score-sites: --scored-sites, --scored-targets, --decoy-scores and --curves "
+                 "are required (unless --estimate)")
     rows, targets, decoy_rows, curves, columns, classes, ranked = run(
-        candidates, decoys, read_regions(args.regions), args.sites, predictors,
-        parse_seed(args.seed), args.classes.split(",") if args.classes else None,
-        args.score_weak_sites, args.fdr, args.threads, args.context, args.temperature,
+        candidates, decoys, regions, args.sites, predictors, parse_seed(args.seed),
+        classes, args.score_weak_sites, args.fdr, args.threads, args.temperature,
         args.calibration_windows, args.random_seed)
     write_scored(rows, targets, decoy_rows, curves, columns, classes, ranked,
                  args.scored_sites, args.scored_targets, args.decoy_scores, args.curves)
@@ -384,9 +393,6 @@ def main(argv=None):
     s.add_argument("--score-weak-sites", action="store_true",
                    help="also score 6mer and offset-6mer sites (many more sites)")
     s.add_argument("--fdr", type=float, default=0.05, help="q-value threshold of `support`")
-    s.add_argument("--context", type=int, default=200,
-                   help="nt of the region kept on each side of a site for IntaRNA's "
-                        "accessibility (0: the whole region)")
     s.add_argument("--temperature", type=float, default=None,
                    help="IntaRNA temperature in Celsius (default 37; RNAhybrid has none)")
     s.add_argument("--calibration-windows", type=int, default=2000,
@@ -394,10 +400,12 @@ def main(argv=None):
                         "(0: no calibration, RNAhybrid ranked by MFE)")
     s.add_argument("--random-seed", type=int, default=1)
     s.add_argument("--threads", type=int, default=1)
-    s.add_argument("--scored-sites", required=True)
-    s.add_argument("--scored-targets", required=True)
-    s.add_argument("--decoy-scores", required=True)
-    s.add_argument("--curves", required=True)
+    s.add_argument("--estimate", action="store_true",
+                   help="print the sites to score per class and a rough run time, then stop")
+    s.add_argument("--scored-sites", default="")
+    s.add_argument("--scored-targets", default="")
+    s.add_argument("--decoy-scores", default="")
+    s.add_argument("--curves", default="")
     s.set_defaults(func=cmd_score_sites)
 
 

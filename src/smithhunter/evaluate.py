@@ -495,16 +495,16 @@ def scoring_report(planted: list[dict], scored: list[dict]) -> str:
             s1 = sum(1 for r in group if r["support"] not in ("", None) and int(r["support"]) >= 1)
             s2 = sum(1 for r in group if r["support"] not in ("", None) and int(r["support"]) >= 2)
             text += f"  {kind:<14} {s1}/{len(group)} {s2}/{len(group)}\n"
-    planted_keys = {(r["candidate"], r["transcript"]) for r in planted}
-    calls = [s for s in scored if s.get("support", "") not in ("", None) and int(s["support"]) >= 1]
-    true = [s for s in calls if (s["candidate"], s["transcript"]) in planted_keys
-            and any(r["candidate"] == s["candidate"] and r["transcript"] == s["transcript"]
-                    and r.get("support") not in ("", None) and int(r["support"]) >= 1
-                    and _same_site(r, s) for r in planted)]
-    n_false = len(calls) - len(true)
-    share = f"{n_false / len(calls):.2f}" if calls else "NA"
-    text += (f"Scored sites called (support >= 1): {len(calls)}, of which not planted: "
-             f"{n_false} (false discovery proportion {share})\n")
+    for level in (1, 2):
+        calls = [x for x in scored if x.get("support", "") not in ("", None)
+                 and int(x["support"]) >= level]
+        true = [x for x in calls if any(r["candidate"] == x["candidate"]
+                                        and r["transcript"] == x["transcript"]
+                                        and _same_site(r, x) for r in planted)]
+        n_false = len(calls) - len(true)
+        share = f"{n_false / len(calls):.2f}" if calls else "NA"
+        text += (f"Scored sites called (support >= {level}): {len(calls)}, of which not "
+                 f"planted: {n_false} (false discovery proportion {share})\n")
     return text
 
 
