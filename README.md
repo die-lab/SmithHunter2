@@ -26,9 +26,8 @@ SmithHunter2 is a rewrite of [SmithHunter](https://github.com/ESZlab/SmithHunter
 (small mitochondrial highly transcribed RNAs) but no longer limited to mitochondria.
 
 > **Status: early development.** Module A (small RNA discovery) works and is tested.
-> Module B (target prediction) is in progress: seed sites are available, energy and
-> accessibility scores and precursor folding are next
-> ([design](docs/module_b_design.md)).
+> Module B is in progress: seed sites and precursor folding are available, energy and
+> accessibility scores are next ([design](docs/module_b_design.md)).
 
 ## How it works
 
@@ -285,6 +284,56 @@ Expect this to be close to the real count: a seed match on its own does not make
 target. Energy and accessibility scores per site (IntaRNA, RNAhybrid), with q-values from
 the same decoys, are the next step.
 
+## Precursor folding (module B)
+
+Could a candidate come from a hairpin, as a miRNA would? The `precursors` rule folds two
+windows around each candidate with RNAfold (ViennaRNA), so that the candidate can be in
+either arm: `long` bases upstream and `short` downstream (window `3p`), and the reverse
+(window `5p`), on the candidate's strand. The result is a description, not a filter.
+
+```yaml
+precursors:
+  flanks: [15, 50]     # [short, long]
+  temperature: 25      # required, no default: Celsius, the temperature your organism lives at
+  shuffles: 1000       # dinucleotide-shuffled windows for the p-value (0: none)
+```
+
+```bash
+snakemake -s /path/to/SmithHunter2/workflow/Snakefile --cores 8 precursors
+```
+
+The candidates are the loci named in `targets.candidates` (default
+`results/discovery/candidates.fasta`, so an edited copy selects them); the interval is the
+representative read of the locus (`rep_start`–`rep_end` in `loci.tsv`). Windows cross the
+origin of circular genomes and are cut at the ends of linear contigs. Each window is
+compared with shuffled versions of itself that keep its dinucleotide composition, as in
+randfold; with a fixed random seed the table is the same for any number of cores.
+Expect about 1.5 s per window on one core with 1000 shuffles.
+
+`results/precursors/precursors.tsv` has two rows per candidate:
+
+| column | meaning |
+|---|---|
+| `candidate`, `genome`, `contig`, `strand`, `candidate_start`, `candidate_end` | the candidate, 1-based as in `loci.tsv` |
+| `window` | `3p` (long flank upstream: the candidate would be in the 3' arm) or `5p` |
+| `window_start`, `window_end` | 1-based, forward strand; start > end and `wraps_origin` = 1 across the origin |
+| `clipped` | 1 if the window was cut at a contig end (or is as long as a small circular contig) |
+| `length`, `candidate_from`, `candidate_to` | window length and position of the candidate inside it (1-based, 5'→3' of the RNA) |
+| `sequence`, `structure` | window on the candidate strand (DNA alphabet) and RNAfold dot-bracket |
+| `mfe` | minimum free energy, kcal/mol |
+| `amfe` | −MFE / length × 100 (positive) |
+| `gc`, `mfei` | GC% and MFEI = AMFE / GC% (pre-miRNAs are typically above ~0.85; NA without G or C) |
+| `shuffles`, `pvalue` | (k + 1) / (n + 1), k = shuffled windows with MFE ≤ the real one; never below 1 / (n + 1) |
+| `hairpin_loops` | number of hairpin loops (1 = unbranched) |
+| `stem_pairs`, `stem_fraction` | base pairs of the largest stem-loop (a hairpin loop with the pairs enclosing only it) and their share of all pairs |
+| `single_hairpin` | 1 if `stem_fraction` ≥ 0.8 |
+| `arm`, `in_arm` | `5p` / `3p`: the candidate bases paired in that stem-loop are all in one arm (`in_arm` = 1); `both`: it spans the loop; `NA`: none paired there |
+| `paired_fraction` | share of the candidate bases that are paired |
+| `best` | 1 for the window with the lower p-value (then lower MFE, then `3p`) |
+
+Two windows are tested per candidate, so roughly 10% of random sequences have a
+window with p ≤ 0.05: read the p-value together with the hairpin columns.
+
 ## Benchmark on simulated data
 
 `smithhunter simulate` writes a complete experiment with known truth: synthetic
@@ -335,8 +384,8 @@ they check that the workflow runs, not that the results are meaningful.
 
 ## Roadmap
 
-1. Module B: IntaRNA and RNAhybrid scores per site with q-values from decoys, precursor
-   folding, then the opt-in bacterial mode.
+1. Module B: IntaRNA and RNAhybrid scores per site with q-values from decoys, then the
+   opt-in bacterial mode.
 2. Report: plots of module B results.
 
 ## Citation
