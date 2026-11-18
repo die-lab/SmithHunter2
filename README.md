@@ -26,9 +26,8 @@ SmithHunter2 is a rewrite of [SmithHunter](https://github.com/ESZlab/SmithHunter
 (small mitochondrial highly transcribed RNAs) but no longer limited to mitochondria.
 
 > **Status: early development.** Module A (small RNA discovery) works and is tested.
-> Module B (target prediction) is in progress: seed sites are available, energy and
-> accessibility scores and precursor folding are next
-> ([design](docs/module_b_design.md)).
+> Module B (target prediction and precursor folding) works on simulated data; the
+> bacterial mode and the plots of module B are next ([design](docs/module_b_design.md)).
 
 ## How it works
 
@@ -80,8 +79,12 @@ genome (best alignment of the read in each genome):
 | `severe` | as `best`, but a tie is always discarded |
 | `evil` | as `severe`, and the read is also discarded (`evil_rejected`) when an exclude genome fits it at most `assignment.evil_max_diff` mismatches worse than the focus genome, even though the focus genome fits better |
 
-`evil_max_diff` must not exceed `mapping.mismatches`; in `evil` mode bowtie also reports the
-worse alignments (no `--strata`/`-m`, up to `max_hits + 1` alignments) so they can be seen.
+`evil_max_diff` must not exceed `mapping.mismatches`. In `evil` mode bowtie also reports the
+worse alignments (no `--strata`/`-m`, up to `max_hits + 1` alignments) and searches
+`mapping.mismatches + evil_max_diff` mismatches deep (at most 3), so that a read with one
+mismatch on the focus genome sees an exclude copy with two. Alignments beyond
+`mapping.mismatches` only serve this comparison: a read with nothing else stays `unmapped`.
+Expect `evil` to remove more on large exclude genomes, where such near matches occur by chance.
 
 ### How loci are called
 
@@ -106,7 +109,8 @@ Requirements: Linux and conda (or mamba). No root access is needed.
 ```bash
 git clone https://github.com/die-lab/SmithHunter2.git
 cd SmithHunter2
-mamba env create -f environment.yml      # fastp, bowtie 1, snakemake, python
+mamba env create -f environment.yml      # fastp, bowtie 1, snakemake, python,
+                                         # IntaRNA, RNAhybrid, ViennaRNA (module B)
 mamba activate smithhunter2
 ```
 
@@ -246,7 +250,7 @@ snakemake -s /path/to/SmithHunter2/workflow/Snakefile --cores 8 --sdm conda repo
 The reporting layer (funnel, provenance, ggplot2 plots, MultiQC) follows the one of the
 smithhunter24 Snakemake port of SmithHunter v0 module A.
 
-## Target prediction (module B, in progress)
+## Target prediction (module B)
 
 After reviewing the candidates of module A, declare the transcripts to search as
 **target sets** and run the `targets` rule:
@@ -261,6 +265,12 @@ targets:
   candidates: results/discovery/candidates.fasta
   seed: [2, 8]
   decoys: 20
+  predictors: [intarna, rnahybrid]   # [] for seed sites only
+  fdr: 0.05                          # q-value threshold of `support`
+  score_weak_sites: false            # 6mer and offset-6mer: listed, not scored
+  # temperature: 25                  # IntaRNA, Celsius; default precursors.temperature,
+                                     # else 37 (RNAhybrid has no temperature option)
+  # calibration_windows: 2000        # RNAcalibrate sample; 0: rank RNAhybrid by MFE
 ```
 
 ```bash
@@ -279,11 +289,101 @@ features) or from a transcripts FASTA.
 | `sites.tsv` | every site: candidate, transcript, gene, class, position in the region and in the genome, distance from the region ends, AU content of the flanks, 3' supplementary pairing (guide 13–16) |
 | `targets.tsv` | one row per candidate and transcript: sites per class, best class |
 | `site_fdr.tsv` | sites per class for each candidate and for its dinucleotide-shuffled decoys |
+| `scored_sites.tsv` | `sites.tsv` plus the scores of each predictor, their q-values and `support` |
+| `scored_targets.tsv` | one row per candidate and transcript: sites per class, best scores, best q-values, `max_support`, `sites_supported` (sites with every predictor at q ≤ `fdr`) |
+| `decoy_scores.tsv` | the scores of every decoy site |
+| `fdr_curves.tsv` | real and decoy sites at each score threshold, per predictor and class |
 
-The decoys show how many sites a sequence of the same composition finds by chance.
-Expect this to be close to the real count: a seed match on its own does not make a
-target. Energy and accessibility scores per site (IntaRNA, RNAhybrid), with q-values from
-the same decoys, are the next step.
+The decoys (`targets/decoys.fasta`, 20 dinucleotide-shuffled copies of each candidate)
+show how many sites a sequence of the same composition finds by chance. Expect
+`site_fdr.tsv` to be close to 1: a seed match on its own does not make a target.
+
+Sites are then scored, and the decoys' sites go through the identical scoring:
+
+- **IntaRNA** (energy with the accessibility of both partners): the seed is pinned to the
+  site (guide and target positions, no G:U), the interaction is confined to the site and
+  the 3' part of the guide. Accessibility is computed once per region on the whole region.
+  Columns: `intarna_E` (total), `intarna_E_hybrid`, `intarna_ED_target`,
+  `intarna_ED_query`, the paired stretch and the duplex.
+- **RNAhybrid** (duplex energy): a window around the site, with the helix constraint `-f`
+  of the site class. Columns: `rnahybrid_mfe`, `rnahybrid_p`, the paired stretch,
+  `rnahybrid_on_site` (0 when the duplex pairs the seed elsewhere in the window). The
+  p-value uses extreme value parameters fitted by RNAcalibrate per candidate on windows of
+  the target regions themselves, not the fly/worm/human presets; the fit runs without the
+  helix constraint (with it, it fails for about a quarter of the small RNAs), so the
+  p-value is conservative. It is descriptive: q-values do not use it.
+
+Each energy is standardised against the candidate's own decoy sites (`<predictor>_z`,
+standard deviations from their mean; lower is better; a decoy site is standardised
+against the other decoys, so that the decoys are a fair null for the real sites). Decoys share their candidate's
+length and composition, so this removes what composition does to energies: without it a
+GC-rich small RNA's decoys, pairing strongly with anything, hide the true sites of AT-rich
+ones. For each predictor and site class, real and decoy z-scores then give an empirical
+FDR: (decoy sites at or beyond the score / decoys per candidate) / real sites at or beyond
+it, with one decoy site added to every count so that no q-value is 0. `<predictor>_q` is
+that q-value pooled over candidates; `<predictor>_q_candidate` uses
+only the candidate's own decoys, on the raw energy. `support` is the number of predictors
+with q ≤ `fdr`. `support` ≥ 1 accepts a site that either predictor calls, so its false
+discovery rate can reach twice `fdr`; `support` 2 is the stricter call. Nothing is
+filtered out. A site that beats the decoys shows
+complementarity beyond chance, which is not proof of regulation.
+
+Run time grows with the number of sites (about 45 ms per site for both predictors, plus
+the accessibility of each region with sites). Check first with
+`smithhunter score-sites ... --estimate`, which prints the sites per class (real and decoy)
+and a rough run time; on the simulation (4800 sites) scoring takes under 2 minutes on 2
+cores. The first knob on a large UTRome is `score_weak_sites: false` (the default). Real
+UTRomes can reach millions of sites; scoring runs in a single job for now.
+
+## Precursor folding (module B)
+
+Could a candidate come from a hairpin, as a miRNA would? The `precursors` rule folds two
+windows around each candidate with RNAfold (ViennaRNA), so that the candidate can be in
+either arm: `long` bases upstream and `short` downstream (window `3p`), and the reverse
+(window `5p`), on the candidate's strand. The result is a description, not a filter.
+
+```yaml
+precursors:
+  flanks: [15, 50]     # [short, long]
+  temperature: 25      # required, no default: Celsius, the temperature your organism lives at
+  shuffles: 1000       # dinucleotide-shuffled windows for the p-value (0: none)
+```
+
+```bash
+snakemake -s /path/to/SmithHunter2/workflow/Snakefile --cores 8 precursors
+```
+
+The candidates are the loci named in `targets.candidates` (default
+`results/discovery/candidates.fasta`, so an edited copy selects them); the interval is the
+representative read of the locus (`rep_start`–`rep_end` in `loci.tsv`). Windows cross the
+origin of circular genomes and are cut at the ends of linear contigs. Each window is
+compared with shuffled versions of itself that keep its dinucleotide composition, as in
+randfold; with a fixed random seed the table is the same for any number of cores.
+Expect about 1.5 s per window on one core with 1000 shuffles.
+
+`results/precursors/precursors.tsv` has two rows per candidate:
+
+| column | meaning |
+|---|---|
+| `candidate`, `genome`, `contig`, `strand`, `candidate_start`, `candidate_end` | the candidate, 1-based as in `loci.tsv` |
+| `window` | `3p` (long flank upstream: the candidate would be in the 3' arm) or `5p` |
+| `window_start`, `window_end` | 1-based, forward strand; start > end and `wraps_origin` = 1 across the origin |
+| `clipped` | 1 if the window was cut at a contig end (or is as long as a small circular contig) |
+| `length`, `candidate_from`, `candidate_to` | window length and position of the candidate inside it (1-based, 5'→3' of the RNA) |
+| `sequence`, `structure` | window on the candidate strand (DNA alphabet) and RNAfold dot-bracket |
+| `mfe` | minimum free energy, kcal/mol |
+| `amfe` | −MFE / length × 100 (positive) |
+| `gc`, `mfei` | GC% and MFEI = AMFE / GC% (pre-miRNAs are typically above ~0.85; NA without G or C) |
+| `shuffles`, `pvalue` | (k + 1) / (n + 1), k = shuffled windows with MFE ≤ the real one; never below 1 / (n + 1) |
+| `hairpin_loops` | number of hairpin loops (1 = unbranched) |
+| `stem_pairs`, `stem_fraction` | base pairs of the largest stem-loop (a hairpin loop with the pairs enclosing only it) and their share of all pairs |
+| `single_hairpin` | 1 if `stem_fraction` ≥ 0.8 |
+| `arm`, `in_arm` | `5p` / `3p`: the candidate bases paired in that stem-loop are all in one arm (`in_arm` = 1); `both`: it spans the loop; `NA`: none paired there |
+| `paired_fraction` | share of the candidate bases that are paired |
+| `best` | 1 for the window with the lower p-value (then lower MFE, then `3p`). Its p-value is the smaller of two: on random sequence about 2 × the nominal rate passes |
+
+Two windows are tested per candidate, so roughly 10% of random sequences have a
+window with p ≤ 0.05: read the p-value together with the hairpin columns.
 
 ## Benchmark on simulated data
 
@@ -306,11 +406,40 @@ snakemake -s ../workflow/Snakefile --cores 2
 smithhunter evaluate                        # writes evaluation/summary.txt and tables
 ```
 
+For module B, 50 nuclear genes carry planted 8mer sites in their 3'UTRs: seed matches
+only for 15 small RNAs (with 3'UTRs of random sequence, these should not stand out from
+the decoys), and sites with pairing beyond the seed for 10 (`extensive`: guide 2–8 and
+12 to the end; `supplementary`: guide 2–8 and 13–16), which should. One small RNA sits in
+the 5' arm of a hairpin (21 bp stem). Run `snakemake ... targets precursors` before
+`evaluate` to get the recovery of the planted sites, their support, the share of calls
+that are not planted, and whether the hairpin is found. On the clean simulation, seeds
+1 and 2: every planted site is found with its class; support ≥ 1 for 2/5 and 3/5
+`extensive` sites (0 and 3 with both predictors), none of the `supplementary` or
+seed-only sites; 1 of 3 and 1 of 4 calls with support ≥ 1 are not planted, none of the 3
+calls with support 2. Missed `extensive` sites belong to A/U-rich small RNAs, whose
+duplexes are weak next to the chance pairing of their own decoys. With 20 decoys and
+about 50 real sites per class, the q-values are coarse: on small candidate sets, read
+`<predictor>_z` and the per-site scores, not only `support`.
+
 `smithhunter simulate --help` lists the options (number of samples and reads, genome
 sizes, degradation level, error rate, paired-end reads, seed). `evaluate` reports for
 each simulated small RNA whether it was recovered as its own locus, merged with
 another, split, missed, or filtered out, and lists passing loci that contain no
 simulated small RNA.
+
+`simulate --mode best|severe|evil` (default `best`) and `--evil-max-diff 0|1` (default 1)
+write the genome choice (`assignment.mode`, `assignment.evil_max_diff`) into the
+configuration. The simulated NUMTs are the cases on which the modes differ: a nuclear copy
+that is identical (a tie), one with one mismatch (kept by `best` and `severe`, removed by
+`evil`), one with two mismatches (kept by every mode) and one whose nuclear copy is the
+expressed one (always `excluded`). `truth/features.tsv` holds the outcome expected under
+each mode (`expected_best`, `expected_severe`, `expected_evil`); `evaluate` reads the mode
+the run used from `results/report/provenance.yaml`, compares with the matching column, and
+reports the reads and small RNAs removed as `evil_rejected` (`evaluation/origin_by_feature.tsv`).
+
+```bash
+smithhunter simulate --outdir sim_evil --mode evil
+```
 
 ## Known limitations
 
@@ -335,9 +464,10 @@ they check that the workflow runs, not that the results are meaningful.
 
 ## Roadmap
 
-1. Module B: IntaRNA and RNAhybrid scores per site with q-values from decoys, precursor
-   folding, then the opt-in bacterial mode.
-2. Report: plots of module B results.
+1. Module B: the opt-in bacterial mode (IntaRNA around start codons, no seed rule).
+2. Report: plots of module B results, and a summary joining module A and module B per
+   candidate.
+3. Module A: thresholds tuned on a full-size real library.
 
 ## Citation
 

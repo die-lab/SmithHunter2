@@ -41,6 +41,9 @@ def test_each_site_counted_once_and_classes_filter():
 def test_other_seed_range():
     pattern = revcomp(GUIDE[3:10])
     assert classes(PAD + pattern + PAD, seed=(4, 10)) == [("seed4-10", 10, 17)]
+    site, = scan(GUIDE, PAD + pattern + PAD, (4, 10))
+    # t1, the base opposite guide position 1, is 3 past the base opposite position 4
+    assert site.t1 == site.end - 1 + 3
 
 
 def test_supplementary_pairing():

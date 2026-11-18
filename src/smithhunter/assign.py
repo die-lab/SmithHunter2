@@ -26,7 +26,12 @@ treated. Mismatches are compared per genome (the best alignment of the read in t
               (class ``evil_rejected``). The exclude genome is the filtering-out genome:
               with ``evil_max_diff = 1`` a read with 0 mismatches on the focus genome and
               1 on the nuclear genome is dropped; with 0 evil is the same as severe.
-              bowtie must report the non-best strata (see ``align`` in mapping.smk).
+              bowtie must report the non-best strata (see ``align`` in mapping.smk), and
+              must search ``evil_max_diff`` mismatches deeper than ``mapping.mismatches``:
+              a read with 1 mismatch on the focus genome (sequencing error, non-templated
+              tail) fits the same exclude copy with 2. Alignments beyond
+              ``max_mismatches`` are only used for this comparison ("probe" alignments):
+              they never place a read, and a read that has nothing else is ``unmapped``.
 """
 
 from __future__ import annotations
@@ -114,14 +119,22 @@ def group_hits(sam_lines: Iterable[str]) -> Iterator[tuple[str, list[Hit]]]:
 
 def classify(hits: list[Hit], contigs: dict[str, Contig], roles: dict[str, str],
              policy: str, multimap: str, mode: str = "best", evil_max_diff: int = 0,
-             max_hits: int | None = None):
+             max_hits: int | None = None, max_mismatches: int | None = None):
     """Return (class, genomes, [(genome, hit, weight)]) for one read.
 
-    ``hits`` may span several mismatch strata (mode ``evil`` needs them); only the best
-    stratum over all genomes is used to choose the origin.
+    ``hits`` may span several mismatch strata (mode ``evil`` needs them) and come in any
+    order; only the best stratum over all genomes is used to choose the origin. Hits with
+    more than ``max_mismatches`` mismatches (reported when bowtie searches deeper for mode
+    ``evil``) only tell how well an exclude genome fits.
     """
     unique_hits = sorted({fold_circular(h, contigs[h.ref]) for h in hits},
                          key=lambda h: (h.ref, h.start, h.strand))
+    probe_exclude = [h.mismatches for h in unique_hits
+                     if roles[contigs[h.ref].genome] != "focus"]
+    if max_mismatches is not None:
+        unique_hits = [h for h in unique_hits if h.mismatches <= max_mismatches]
+        if not unique_hits:
+            return "unmapped", [], []
     all_by_genome: dict[str, list[Hit]] = defaultdict(list)
     for h in unique_hits:
         all_by_genome[contigs[h.ref].genome].append(h)
@@ -132,16 +145,18 @@ def classify(hits: list[Hit], contigs: dict[str, Contig], roles: dict[str, str],
     genomes = sorted(by_genome)
     focus = [g for g in genomes if roles[g] == "focus"]
     if max_hits is not None and sum(len(v) for v in by_genome.values()) > max_hits:
-        return "too_many_hits", genomes, []
+        # no genomes, as for the reads bowtie sets aside with -m: the list would come from
+        # a truncated set of alignments
+        return "too_many_hits", [], []
 
-    if mode == "evil":
-        focus_best = [m for g, m in best.items() if roles[g] == "focus"]
-        exclude_best = [m for g, m in best.items() if roles[g] != "focus"]
-        if focus_best and exclude_best:
-            # mismatches on the filtering-out genome minus mismatches on the focus genome
-            worse_by = min(exclude_best) - min(focus_best)
-            if 0 < worse_by <= evil_max_diff:
-                return "evil_rejected", sorted(best), []
+    if mode == "evil" and focus and probe_exclude:
+        # mismatches on the filtering-out genome minus mismatches on the focus genome
+        worse_by = min(probe_exclude) - top
+        if 0 < worse_by <= evil_max_diff:
+            limit = top + evil_max_diff
+            culprits = {contigs[h.ref].genome for h in hits
+                        if roles[contigs[h.ref].genome] != "focus" and h.mismatches <= limit}
+            return "evil_rejected", sorted(set(focus) | culprits), []
 
     if not focus:
         return "excluded", genomes, []
@@ -162,7 +177,8 @@ def classify(hits: list[Hit], contigs: dict[str, Contig], roles: dict[str, str],
 
 def assign(sam_path: str, excess_ids: set[str], all_ids: list[str], contigs: dict[str, Contig],
            roles: dict[str, str], policy: str, multimap: str, mode: str = "best",
-           evil_max_diff: int = 0, max_hits: int | None = None):
+           evil_max_diff: int = 0, max_hits: int | None = None,
+           max_mismatches: int | None = None):
     """Yield (read_id, class, genomes, placed hits) for every unique read."""
     if policy not in POLICIES:
         raise ValueError(f"ambiguous policy must be one of {POLICIES}")
@@ -177,7 +193,7 @@ def assign(sam_path: str, excess_ids: set[str], all_ids: list[str], contigs: dic
         for read_id, hits in group_hits(fh):
             mapped.add(read_id)
             cls, genomes, placed = classify(hits, contigs, roles, policy, multimap, mode,
-                                              evil_max_diff, max_hits)
+                                              evil_max_diff, max_hits, max_mismatches)
             yield read_id, cls, genomes, placed
     for read_id in all_ids:
         if read_id not in mapped:

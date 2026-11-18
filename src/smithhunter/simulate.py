@@ -6,8 +6,8 @@ a ready-to-run configuration and the truth tables used by ``smithhunter evaluate
 Genomes
 - ``mito`` (focus, circular): an AT-rich genome tiled with protein genes, 22 tRNAs,
   two rRNAs and a control region, on both strands.
-- ``nuclear`` (exclude): random sequence holding NUMTs (mitochondrial segments, one
-  identical and one differing by a single base inside a smallRNA), a repeat with more
+- ``nuclear`` (exclude): random sequence holding NUMTs (mitochondrial segments: one
+  identical, others differing by one or two bases inside a smallRNA), a repeat with more
   copies than ``max_hits``, piRNA-like clusters, nuclear smallRNAs, and 50 two-exon genes
   (GFF3) whose 3'UTRs carry planted seed sites of mitochondrial smallRNAs (8mer for
   srna_001-010, 7mer-m8 for srna_011-015; ``truth/targets.tsv``), to test module B.
@@ -38,6 +38,29 @@ identically into a NUMT (ambiguous reads: missed with ``ambiguous: report``), on
 NUMT with one difference (assigned to mito by ``--best --strata``), one with a fixed
 SNP against the reference, one with heteroplasmy in one sample, one too weak to pass
 and one expressed in a single sample.
+
+Genome-choice modes (``assignment.mode``, written to the config by ``--mode``). The NUMT
+scenarios are the ones on which ``best``, ``severe`` and ``evil`` differ; the outcome
+expected under each mode is in the ``expected_best`` / ``expected_severe`` /
+``expected_evil`` columns of ``truth/features.tsv`` (``expected`` is the one of the mode
+written to the config, ``truth/assignment.tsv`` records the settings they assume):
+
+==================== ======================== ====== ====== =========================
+scenario             nuclear copy             best   severe evil (evil_max_diff 1)
+==================== ======================== ====== ====== =========================
+srna_numt_identical  identical                missed missed missed
+                                              (pass with ``ambiguous: split``; severe and
+                                              evil discard the tie whatever the policy)
+srna_numt_1mm        1 mismatch               pass   pass   missed (``evil_rejected``)
+srna_numt_2mm        2 mismatches             pass   pass   pass (beyond the tolerance)
+srna_numt_nuclear    1 mismatch, and it is    fail   fail   fail (reads are ``excluded``:
+                     the nuclear copy that                  the exclude genome fits better,
+                     is expressed                           which is not an evil case)
+==================== ======================== ====== ====== =========================
+
+``evil`` with ``evil_max_diff`` 0 is ``severe``. The scenarios added for the modes draw
+from a random generator of their own, so the genomes, the planted target sites and the
+inserts of every other source are the same as before they existed.
 """
 
 from __future__ import annotations
@@ -45,6 +68,7 @@ from __future__ import annotations
 import gzip
 import math
 import random
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -90,6 +114,12 @@ class Params:
     error_rate: float = 0.002
     max_hits: int = 50
     ambiguous: str = "report"
+    mode: str = "best"  # assignment.mode written to the config
+    evil_max_diff: int = 1  # assignment.evil_max_diff written to the config
+
+
+MODES = ("best", "severe", "evil")
+MISMATCHES = 1  # mapping.mismatches written to the config
 
 
 @dataclass
@@ -110,6 +140,8 @@ class Source:
     alt_fraction: list[float] = field(default_factory=list)
     counts: list[int] = field(default_factory=list)
     sequence: str = ""
+    by_mode: dict[str, str] = field(default_factory=dict)  # mode -> outcome, if not `expected`
+    stream: str = "main"  # random generator of its counts and inserts (see Simulator.stream)
 
 
 FLANK = 5
@@ -134,7 +166,27 @@ class Simulator:
         self.rng = random.Random(p.seed)
         self.samples = [f"sim{i + 1}" for i in range(p.samples)]
         self.sources: list[Source] = []
-        
+        # one generator per group of scenarios added later (genome-choice modes, module B),
+        # so that each group leaves the random stream of everything else untouched
+        self.streams = {"main": self.rng, "modes": random.Random(f"{p.seed}:modes"),
+                        "module_b": random.Random(f"{p.seed}:module_b")}
+
+    @contextmanager
+    def stream(self, name: str):
+        """Draw from the generator ``name`` inside the block."""
+        saved, self.rng = self.rng, self.streams[name]
+        try:
+            yield
+        finally:
+            self.rng = saved
+
+    def mode_scenarios(self):
+        return self.stream("modes")
+
+    def expected(self, src: Source, mode: str) -> str:
+        if mode == "evil" and self.p.evil_max_diff == 0:
+            mode = "severe"
+        return src.by_mode.get(mode, src.expected)
 
     # sequence helpers -----------------------------------------------------------------
 
@@ -254,13 +306,20 @@ class Simulator:
 
         # NUMTs: the nuclear copies (smallRNA +- 150 nt) are written by build_nuclear; the
         # whole copied segment is kept free of other smallRNAs.
+        # A tie between genomes: the `ambiguous` policy decides in mode best, severe and
+        # evil always discard it.
         s = self.free_position(mito, 322, taken) + 150
         expected = "pass" if p.ambiguous == "split" else "missed"
-        self.srna(mito, "srna_numt_identical", "srna_numt_identical", s, 22, "+",
-                  self.per_sample(3000), expected)
+        src = self.srna(mito, "srna_numt_identical", "srna_numt_identical", s, 22, "+",
+                        self.per_sample(3000), expected)
+        src.by_mode = {"severe": "missed", "evil": "missed"}
         nuclear.append(("identical", mito.region(s - 150, s + 172), None))
+        # The mitochondrion fits better by one mismatch: kept by best and severe, discarded
+        # (evil_rejected) by evil with evil_max_diff >= 1.
         s = self.free_position(mito, 322, taken) + 150
-        self.srna(mito, "srna_numt_1mm", "srna_numt_1mm", s, 22, "+", self.per_sample(3000), "pass")
+        src = self.srna(mito, "srna_numt_1mm", "srna_numt_1mm", s, 22, "+",
+                        self.per_sample(3000), "pass")
+        src.by_mode = {"evil": "missed"}
         nuclear.append(("1mm", mito.region(s - 150, s + 172), 150 + 11))
 
         # Fixed SNP: the reads carry a base that differs from the reference.
@@ -283,6 +342,11 @@ class Simulator:
             s = self.free_position(mito, 22, taken)
             means = [3000 * p.reads / 1e6] + [0.0] * (p.samples - 1)
             self.srna(mito, "srna_one_sample", "srna_one_sample", s, 22, "-", means, "fail")
+
+        with self.mode_scenarios():
+            self.add_mode_scenarios(mito, nuclear, taken)
+        with self.stream("module_b"):
+            self.add_hairpin(mito, taken)
 
         # tRNA fragments: 5' fragments map; 3' fragments with CCA mostly do not (up to 3
         # mismatches, fewer when the bases after the tRNA happen to match).
@@ -321,6 +385,53 @@ class Simulator:
                                            mito.name, mito.contig, s, e, strand, "background",
                                            [mean] * p.samples, mito.region(s, e, strand)))
 
+    def add_mode_scenarios(self, mito: Genome, nuclear: list, taken: list[tuple]):
+        """More NUMTs for the genome-choice modes (called inside ``mode_scenarios``)."""
+        rng = self.rng
+
+        def other(base: str) -> str:
+            return rng.choice([b for b in "ACGT" if b != base])
+
+        # Two mismatches in the nuclear copy, both covered by every isoform (positions 8
+        # and 15 of 22): one more than evil_max_diff can be (it is capped at
+        # mapping.mismatches = 1), so every mode keeps the smallRNA.
+        s = self.free_position(mito, 322, taken) + 150
+        src = self.srna(mito, "srna_numt_2mm", "srna_numt_2mm", s, 22, "+",
+                        self.per_sample(3000), "pass")
+        src.stream = "modes"
+        segment = mito.region(s - 150, s + 172)
+        nuclear.append(("2mm", segment, {150 + i: other(segment[150 + i]) for i in (7, 14)}))
+
+        # The nuclear copy (one mismatch) is the expressed one: its reads fit the exclude
+        # genome better and are `excluded` in every mode, never `evil_rejected`. The truth
+        # interval is the mitochondrial place, where no locus may pass (a read whose
+        # sequencing error restores the mitochondrial base can still land there).
+        s = self.free_position(mito, 322, taken) + 150
+        src = self.srna(mito, "srna_numt_nuclear", "srna_numt_nuclear", s, 22, "+",
+                        self.per_sample(3000), "fail", group="nuclear_numt")
+        src.stream = "modes"
+        pos = FLANK + 11
+        src.alt = {pos: other(src.template[pos])}
+        src.alt_fraction = [1.0] * self.p.samples
+        nuclear.append(("nuclear_1mm", mito.region(s - 150, s + 172), {150 + 11: src.alt[pos]}))
+
+    def add_hairpin(self, mito: Genome, taken: list[tuple]):
+        """A smallRNA in the 5' arm of a hairpin, for precursor folding (module B): stem of
+        22 bp with one mismatch, loop of 10 nt. Called inside ``stream("module_b")``; it
+        rewrites a free stretch of the mitochondrion, away from the other smallRNAs."""
+        s = self.free_position(mito, 54 + 80, taken) + 40
+        arm = mito.seq[s:s + 22]
+        loop = self.random_seq(10, at=0.6)
+        arm3 = list(revcomp(arm))
+        arm3[11] = arm[10]          # one mismatch in the middle of the stem
+        hairpin = arm + loop + "".join(arm3)
+        mito.seq = mito.seq[:s] + hairpin + mito.seq[s + len(hairpin):]
+        src = self.srna(mito, "srna_hairpin", "srna_hairpin", s, 22, "+",
+                        self.per_sample(3000), "pass")
+        src.stream = "module_b"
+        self.hairpins = [{"feature_id": src.id, "arm": "5p", "stem_bp": 21, "loop": len(loop),
+                          "genomic_start": s + 1, "genomic_end": s + len(hairpin)}]
+
     def build_nuclear(self, numts: list) -> Genome:
         p, rng = self.p, self.rng
         seq = list(self.random_seq(p.nuclear_length, at=0.6))
@@ -328,13 +439,16 @@ class Simulator:
 
         def place(length: int) -> int:
             for _ in range(10_000):
-                s = rng.randint(1000, p.nuclear_length - length - 1000)
+                s = self.rng.randint(1000, p.nuclear_length - length - 1000)
                 if all(s + length < us or s > ue for us, ue in used):
                     used.append((s - 100, s + length + 100))
                     return s
             raise ValueError("nuclear genome too small for the simulated features")
 
+        # NUMTs: (kind, mitochondrial segment, None | position to change | {position: base})
         for kind, segment, mm_pos in numts:
+            if isinstance(mm_pos, dict):
+                continue  # mode scenarios, placed below
             segment = list(segment)
             if mm_pos is not None:
                 segment[mm_pos] = rng.choice([b for b in "ACGT" if b != segment[mm_pos]])
@@ -347,6 +461,14 @@ class Simulator:
             seq[s:s + len(repeat)] = repeat
             repeat_pos.append(s)
         genes = self.nuclear_genes(seq, place)
+        with self.mode_scenarios():
+            for kind, segment, changes in numts:
+                if isinstance(changes, dict):
+                    segment = list(segment)
+                    for pos, base in changes.items():
+                        segment[pos] = base
+                    s = place(len(segment))
+                    seq[s:s + len(segment)] = segment
         nuc = Genome("nuclear", "chrN", "".join(seq), circular=False)
 
         weights = [rng.lognormvariate(0, 1.5) for _ in range(40)]
@@ -409,10 +531,40 @@ class Simulator:
             pos = rng.randint(a + 20, b - 20 - len(site))
             seq[pos:pos + len(site)] = list(site if gene["strand"] == "+" else revcomp(site))
             self.planted.append({"feature_id": guide.id, "transcript": f"{gene['id']}.t1",
-                                 "gene": gene["id"], "site_class": cls,
+                                 "gene": gene["id"], "site_class": cls, "pairing": "seed",
                                  "genomic_start": pos + 1, "genomic_end": pos + len(site)})
+        with self.stream("module_b"):
+            self.plant_extended_sites(seq, genes[15:25], guides[:10])
         self.genes = genes
         return genes
+
+    def plant_extended_sites(self, seq: list[str], genes: list[dict], guides: list):
+        """8mer sites with pairing beyond the seed, which the energy predictors of module B
+        should rank above the decoys (the seed-only sites above should not stand out).
+
+        ``extensive``: guide 2-8 and 12 to the 3' end pair, 9-11 do not (a central
+        bulge, so the target is not a copy of the smallRNA that reads could align to);
+        ``supplementary``: guide 2-8 and 13-16 pair (Grimson et al. 2007), nothing else.
+        Called inside ``stream("module_b")``."""
+        rng = self.rng
+        for k, (guide, gene) in enumerate(zip(guides, genes)):
+            g = guide.sequence
+            n = len(g)
+            pairing = "extensive" if k < 5 else "supplementary"
+            paired = set(range(2, 9)) | (set(range(12, n + 1)) if pairing == "extensive"
+                                         else set(range(13, 17)))
+            # target 5'->3' opposite guide n..2, then the A opposite guide position 1;
+            # a base equal to the guide base never pairs (no G:U either)
+            site = "".join(revcomp(g[q - 1]) if q in paired else g[q - 1]
+                           for q in range(n, 1, -1)) + "A"
+            a, b = gene["utr3"]
+            pos = rng.randint(a + 20, b - 20 - len(site))
+            seq[pos:pos + len(site)] = list(site if gene["strand"] == "+" else revcomp(site))
+            t1 = pos + len(site) if gene["strand"] == "+" else pos + 1
+            seed_span = (t1 - 7, t1) if gene["strand"] == "+" else (t1, t1 + 7)
+            self.planted.append({"feature_id": guide.id, "transcript": f"{gene['id']}.t1",
+                                 "gene": gene["id"], "site_class": "8mer", "pairing": pairing,
+                                 "genomic_start": seed_span[0], "genomic_end": seed_span[1]})
 
     def write_nuclear_gff(self, path: Path, contig: str):
         with open(path, "w") as fh:
@@ -509,6 +661,11 @@ class Simulator:
         p = self.p
         if p.ambiguous not in ("report", "discard", "split"):
             raise ValueError("ambiguous must be report, discard or split")
+        if p.mode not in MODES:
+            raise ValueError(f"mode must be one of {MODES}")
+        if not 0 <= p.evil_max_diff <= MISMATCHES:
+            raise ValueError(f"evil_max_diff must be between 0 and {MISMATCHES} "
+                             "(mapping.mismatches of the simulated config)")
         out = Path(p.outdir)
         for sub in ("data", "config", "truth"):
             (out / sub).mkdir(parents=True, exist_ok=True)
@@ -531,13 +688,19 @@ class Simulator:
                 fh.write(f"{mito.contig}\tsimulate\t{ftype}\t{s + 1}\t{e}\t.\t{strand}\t.\t"
                          f"ID={name};Name={name}\n")
 
-        for src in self.sources:
-            src.counts = [self.neg_binomial(m) for m in src.means]
+        groups = {name: [src for src in self.sources if src.stream == name]
+                  for name in self.streams}
+        for name, sources in groups.items():
+            with self.stream(name):
+                for src in sources:
+                    src.counts = [self.neg_binomial(m) for m in src.means]
         quality = "F" * p.read_length
         for i, sample in enumerate(self.samples):
             reads = []
-            for src in self.sources:
-                reads.extend(self.insert(src, i) for _ in range(src.counts[i]))
+            for name, sources in groups.items():
+                with self.stream(name):
+                    for src in sources:
+                        reads.extend(self.insert(src, i) for _ in range(src.counts[i]))
             self.rng.shuffle(reads)
             r1 = gzip.open(out / "data" / f"{sample}_1.fastq.gz", "wt", compresslevel=1)
             r2 = (gzip.open(out / "data" / f"{sample}_2.fastq.gz", "wt", compresslevel=1)
@@ -567,17 +730,30 @@ class Simulator:
                 "strand": src.strand if g else "", "wraps_origin": int(wraps),
                 "length": src.end - src.start if g else "",
                 "sequence": src.sequence if src.category.startswith("srna") else "",
-                "expected": src.expected, "total_reads": sum(src.counts),
+                "expected": self.expected(src, self.p.mode),
+                **{f"expected_{m}": self.expected(src, m) for m in MODES},
+                "total_reads": sum(src.counts),
                 **{f"reads_{s}": c for s, c in zip(self.samples, src.counts)},
             })
         columns = ["feature_id", "category", "group", "genome", "contig", "start", "end", "strand",
-                   "wraps_origin", "length", "sequence", "expected", "total_reads",
+                   "wraps_origin", "length", "sequence", "expected",
+                   *[f"expected_{m}" for m in MODES], "total_reads",
                    *[f"reads_{s}" for s in self.samples]]
         write_tsv(str(out / "truth" / "features.tsv"), rows, columns)
+        # settings the expected outcomes assume (expected_best: the `ambiguous` policy;
+        # expected_evil: evil_max_diff; all of them: mapping.mismatches)
+        p = self.p
+        write_tsv(str(out / "truth" / "assignment.tsv"),
+                  [{"setting": k, "value": v} for k, v in
+                   (("mode", p.mode), ("evil_max_diff", p.evil_max_diff),
+                    ("ambiguous", p.ambiguous), ("mismatches", MISMATCHES))],
+                  ["setting", "value"])
 
         write_tsv(str(out / "truth" / "targets.tsv"), self.planted,
-                  ["feature_id", "transcript", "gene", "site_class", "genomic_start",
-                   "genomic_end"])
+                  ["feature_id", "transcript", "gene", "site_class", "pairing",
+                   "genomic_start", "genomic_end"])
+        write_tsv(str(out / "truth" / "hairpins.tsv"), getattr(self, "hairpins", []),
+                  ["feature_id", "arm", "stem_bp", "loop", "genomic_start", "genomic_end"])
 
         groups: dict[str, list[int]] = {}
         for src in self.sources:
@@ -620,6 +796,11 @@ genomes:
 
 ambiguous: {p.ambiguous}
 
+# genome choice (simulate --mode / --evil-max-diff); `evaluate` reads the mode of the run
+assignment:
+  mode: {p.mode}
+  evil_max_diff: {p.evil_max_diff}
+
 trimming:
   adapter_r1: {ADAPTER_R1}
   adapter_r2: {ADAPTER_R2}
@@ -627,7 +808,7 @@ trimming:
   max_length: 35
 
 mapping:
-  mismatches: 1
+  mismatches: {MISMATCHES}
   max_hits: {p.max_hits}
 
 loci:
@@ -661,6 +842,12 @@ targets:
   candidates: results/discovery/candidates.fasta
   seed: [2, 8]
   decoys: 20
+
+# Precursor folding: snakemake -s <SmithHunter2>/workflow/Snakefile --cores 2 precursors
+precursors:
+  flanks: [15, 50]            # [short, long] bases around the candidate
+  temperature: 25             # required, no default (Celsius)
+  shuffles: 1000              # dinucleotide shuffles per window for the p-value
 """)
 
 

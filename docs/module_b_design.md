@@ -1,6 +1,8 @@
 # Module B – target prediction and precursor folding: design
 
-Status: agreed design, not implemented. The decisions of section 11 were accepted as
+Status: steps 1–3 and 5 of section 10 are implemented (see there for what differs from
+this design and why); bacterial mode, miRanda and the report are not. The decisions of
+section 11 were accepted as
 proposed (2026-10-09). The general seed-based logic (`ago`) is the default for every target
 set; `bacterial` mode runs only on target sets the user declares as bacterial.
 
@@ -299,6 +301,46 @@ Progress: step 1 is implemented (`regions`, `decoys`, `sites` subcommands, rule
 expected, the site-count FDR is close to 1: a seed match is about as frequent for a real
 small RNA as for its decoys. Counting sites shows how much of the signal is background
 but does not rank targets. Site-level q-values need the scores of step 2.
+
+Steps 2, 3 and 5 are implemented (2026-11-17: `score-sites`, `precursors`, simulation of
+extended sites and a hairpin, CI). Where the implementation departs from sections 4 and 6:
+
+- **IntaRNA accessibility.** Computed once per region on the whole region and written to
+  a table; each site gets only its interaction window (guide length + 15 nt upstream of the
+  seed match, 15 nt downstream) with the matching slice of the table (`--tAcc E`). Results
+  equal those on the whole region (tested; the review checked 30 cases) and the cost per
+  site no longer grows with region length: 8 min → 1.5 min on the simulation. The seed is
+  pinned on the target too (`--seedTRange`, `--seedNoGU`). IntaRNA's energy cut-offs
+  (`--outMaxE`, `--seedMaxE`, 0 by default) are lifted: otherwise 10% of decoy sites had no
+  score and the decoy distribution was truncated.
+- **RNAcalibrate without `-f`.** With the helix constraint the extreme value fit failed
+  for about a quarter of the guides (most random windows only form the forced, near-zero
+  duplex). Without it the p-value is the chance that a random window pairs as well, with
+  any structure: conservative. One fit per candidate, shared with its decoys.
+- **q-values on standardised energies.** Pooling raw energies over candidates, as in 4.3,
+  failed on the simulation: in an AT-rich genome the decoys of GC-rich candidates reach
+  energies that hide true sites of AT-rich candidates (3 of 5 extensive sites supported).
+  Each energy is now standardised against the candidate's own decoy sites
+  (`<predictor>_z`) before pooling. RNAhybrid is therefore ranked by its MFE; the p-value
+  is descriptive. A decoy site is standardised against the other decoys only (leave one
+  decoy out): when the decoys also set their own scale, real sites of no interest reach the
+  tail more often than the decoys can (independent review; a unit test with null data
+  shows 9 vs at most 4 calls in 400). A candidate is standardised only if each of its
+  decoys can be (20 reference scores), and every q-value counts one extra decoy site, so
+  no q is 0.
+- **IntaRNA temperature.** `targets.temperature`, else `precursors.temperature` (the
+  organism), else IntaRNA's 37 °C. RNAhybrid has no temperature option.
+- **Simulation results** (clean library, seeds 1 and 2): all 25 planted sites found with
+  their class; support ≥ 1 for 2/5 and 3/5 extensive (0 and 3 with both predictors), none
+  of the supplementary or seed-only sites; with support ≥ 1, 1 of 3 and 1 of 4 calls are not
+  planted (`support` ≥ 1 is an OR of two tests, so up to 2 × `fdr`), with support 2, 0 of 3.
+  Missed extensive sites belong to A/U-rich small RNAs. Hairpin found in both (best window
+  p ≤ 0.05, single hairpin, 5' arm); 5 of 63 and 6 of 64 other candidates have best-window
+  p ≤ 0.05 (the smaller of two p-values).
+- **Cost.** `score-sites --estimate` prints the sites per class and a rough run time. Not
+  done from section 4.4: Snakemake scatter by candidate batches. The review estimated
+  20k 3'UTRs × 100 candidates at about 4.5M sites, ~54 core-hours, in one job: scatter is
+  needed before a real UTRome.
 
 
 1. Regions, site scan, decoys, FDR on site counts only (no external tools). This is

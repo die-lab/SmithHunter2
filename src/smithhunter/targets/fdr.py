@@ -33,10 +33,12 @@ def site_count_fdr(real: dict[str, int], decoys: list[dict[str, int]], classes) 
 
 
 def qvalues(real: list[float], decoy: list[float], n_decoys: int,
-            higher_is_better: bool = False) -> list[float]:
+            higher_is_better: bool = False, pseudo: int = 0) -> list[float]:
     """q-value of each real score: the lowest FDR among thresholds it passes.
 
-    By default lower scores are better (energies)."""
+    By default lower scores are better (energies). ``pseudo`` is added to the decoy count
+    at every threshold: with 1, a q-value is never 0, as no finite number of decoys can
+    show that nothing would pass."""
     if not real:
         return []
     sign = -1.0 if higher_is_better else 1.0
@@ -48,7 +50,7 @@ def qvalues(real: list[float], decoy: list[float], n_decoys: int,
     for x in sorted(set(r)):
         passed_real = bisect_right(r, x)
         passed_decoy = bisect_right(d, x)
-        fdr_at[x] = min(1.0, passed_decoy / n / passed_real)
+        fdr_at[x] = min(1.0, (passed_decoy + pseudo) / n / passed_real)
     q, best = {}, 1.0
     for x in sorted(fdr_at, reverse=True):
         best = min(best, fdr_at[x])

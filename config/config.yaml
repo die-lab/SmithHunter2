@@ -42,6 +42,7 @@ ambiguous: report
 #             exclude genome at most `evil_max_diff` mismatches WORSE than its best focus
 #             alignment (mismatches on the exclude genome minus mismatches on the focus genome,
 #             1..evil_max_diff). Must be <= mapping.mismatches. 0 = same as severe.
+#             Evil aligns mapping.mismatches + evil_max_diff deep (max 3) to see those hits.
 assignment:
   mode: best
   evil_max_diff: 1       # only used by evil
@@ -105,3 +106,21 @@ targets:
   candidates: results/discovery/candidates.fasta   # edit a copy to review candidates
   seed: [2, 8]                                     # guide positions; v0 used [4, 10]
   decoys: 20                                       # dinucleotide-shuffled decoys each
+  # Step 2: energy scores of the sites, q-values from the decoys (see README)
+  predictors: [intarna, rnahybrid]                 # [] -> seed sites only
+  fdr: 0.05                                        # q-value threshold of `support`
+  score_weak_sites: false                          # 6mer, offset-6mer: listed, not scored
+  # temperature: 25         # IntaRNA, Celsius; default: precursors.temperature, else 37.
+  #                         # RNAhybrid has no temperature option (37 C parameters).
+  # calibration_windows: 2000  # RNAcalibrate sample of the regions; 0 -> rank by MFE
+
+# ---------------------------------------------------------------------------------------
+# Module B (precursor folding): snakemake -s workflow/Snakefile --cores 8 precursors
+# Two windows around each candidate are folded with RNAfold, so that the candidate can be
+# in either arm of a hairpin: [start - long, end + short] and [start - short, end + long]
+# on the candidate strand. Output: results/precursors/precursors.tsv (see README).
+precursors:
+  flanks: [15, 50]       # [short, long] flanking bases (as in v0)
+  temperature: 25        # REQUIRED, no default: folding temperature in Celsius of your
+                         # organism (v0 used 25 for bivalves; 37 for mammals)
+  shuffles: 1000         # dinucleotide-shuffled windows for the p-value (0: no p-value)

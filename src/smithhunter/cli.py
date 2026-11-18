@@ -54,7 +54,8 @@ def cmd_assign(args):
         org.write("read_id\tclass\tgenomes\n")
         for rid, cls, genomes, placed in assign(args.sam, excess, list(table), contigs, roles,
                                                 args.ambiguous, args.multimap, args.mode,
-                                                args.evil_max_diff, args.max_hits):
+                                                args.evil_max_diff, args.max_hits,
+                                                args.max_mismatches):
             label = "+".join(genomes)
             org.write(f"{rid}\t{cls}\t{label}\n")
             for genome, hit, weight in placed:
@@ -182,6 +183,62 @@ def cmd_sites(args):
     print(f"{len(candidates)} candidates, {len(result[1])} sites, {len(result[2])} targets")
 
 
+def cmd_score_sites(args):
+    from .targets.pipeline import read_candidates, read_decoys
+    from .targets.regions import read_regions
+    from .targets.score import run, write_scored
+    genomes = set(filter(None, args.genomes.split(","))) if args.genomes else set()
+    candidates = [(cid, seq) for cid, genome, seq in read_candidates(args.candidates)
+                  if not genomes or not genome or genome in genomes]
+    ids = {cid for cid, _ in candidates}
+    decoys = [d for d in read_decoys(args.decoys) if d[1] in ids]
+    predictors = [p for p in args.predictors.split(",") if p]
+    classes = args.classes.split(",") if args.classes else None
+    regions = read_regions(args.regions)
+    if args.estimate:
+        from .targets.score import estimate
+        print(estimate(candidates, decoys, regions, parse_seed(args.seed), classes,
+                       args.score_weak_sites))
+        return
+    if not all((args.scored_sites, args.scored_targets, args.decoy_scores, args.curves)):
+        sys.exit("score-sites: --scored-sites, --scored-targets, --decoy-scores and --curves "
+                 "are required (unless --estimate)")
+    rows, targets, decoy_rows, curves, columns, classes, ranked = run(
+        candidates, decoys, regions, args.sites, predictors, parse_seed(args.seed),
+        classes, args.score_weak_sites, args.fdr, args.threads, args.temperature,
+        args.calibration_windows, args.random_seed)
+    write_scored(rows, targets, decoy_rows, curves, columns, classes, ranked,
+                 args.scored_sites, args.scored_targets, args.decoy_scores, args.curves)
+    scored = [r for r in rows if r["support"] != ""]
+    print(f"{len(scored)} of {len(rows)} sites scored, {len(decoy_rows)} decoy sites")
+    for n in range(len(ranked), 0, -1):
+        print(f"  sites with support >= {n} (q <= {args.fdr}): "
+              f"{sum(1 for r in scored if r['support'] >= n)}")
+
+
+def cmd_precursors(args):
+    from . import precursor as pc
+    if len(args.flanks) != 2 or min(args.flanks) < 0:
+        sys.exit("--flanks expects two non-negative integers: SHORT LONG")
+    ids = pc.read_candidate_ids(args.candidates) if args.candidates else None
+    candidates, unknown = pc.select_loci(args.loci, ids, args.anchor)
+    if unknown:
+        print(f"warning: {len(unknown)} candidates are not in {args.loci} and are skipped: "
+              f"{', '.join(unknown[:10])}{' ...' if len(unknown) > 10 else ''}", file=sys.stderr)
+    try:
+        contigs = pc.load_contigs(args.genomes, args.contigs,
+                                  {(c["genome"], c["contig"]) for c in candidates})
+        rows = pc.fold_candidates(candidates, contigs, args.temperature, tuple(sorted(args.flanks)),
+                                  args.shuffles, args.random_seed, args.threads, args.rnafold)
+    except (RuntimeError, ValueError) as err:
+        sys.exit(f"precursors: {err}")
+    write_tsv(args.out, rows, pc.COLUMNS)
+    best = [r for r in rows if r["best"]]
+    print(f"{len(candidates)} candidates, {len(rows)} windows folded at {args.temperature:g} C, "
+          f"{args.shuffles} shuffles each; best window is a single hairpin with the candidate "
+          f"in one arm for {sum(1 for r in best if r['single_hairpin'] and r['in_arm'])}")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="smithhunter", description=__doc__)
     p.add_argument("--version", action="version", version=__version__)
@@ -221,6 +278,9 @@ def main(argv=None):
     s.add_argument("--max-hits", type=int, default=None,
                    help="reads with more best alignments are too_many_hits (needed when "
                         "bowtie does not apply -m, i.e. evil mode)")
+    s.add_argument("--max-mismatches", type=int, default=None,
+                   help="alignments with more mismatches only serve the evil comparison "
+                        "(bowtie searches evil_max_diff mismatches deeper in evil mode)")
     s.add_argument("--alignments", required=True)
     s.add_argument("--origin", required=True)
     s.add_argument("--summary", required=True)
@@ -276,6 +336,10 @@ def main(argv=None):
     s.add_argument("--error-rate", type=float, default=0.002)
     s.add_argument("--max-hits", type=int, default=50)
     s.add_argument("--ambiguous", default="report")
+    s.add_argument("--mode", default="best", choices=["best", "severe", "evil"],
+                   help="assignment.mode written to the config (genome choice)")
+    s.add_argument("--evil-max-diff", type=int, default=1, choices=[0, 1],
+                   help="assignment.evil_max_diff written to the config (used by --mode evil)")
     s.set_defaults(func=cmd_simulate)
 
     s = sub.add_parser("evaluate", help="compare results of a simulated run with its truth")
@@ -315,6 +379,54 @@ def main(argv=None):
     s.add_argument("--targets", required=True)
     s.add_argument("--fdr", required=True)
     s.set_defaults(func=cmd_sites)
+
+    s = sub.add_parser("score-sites", help="IntaRNA / RNAhybrid scores of the seed sites, "
+                                           "decoy-based q-values, support")
+    s.add_argument("--candidates", required=True)
+    s.add_argument("--decoys", required=True)
+    s.add_argument("--regions", required=True)
+    s.add_argument("--sites", required=True, help="sites.tsv of the `sites` subcommand")
+    s.add_argument("--genomes", default="", help="only candidates of these genomes")
+    s.add_argument("--seed", default="2-8")
+    s.add_argument("--classes", default="")
+    s.add_argument("--predictors", default="intarna,rnahybrid")
+    s.add_argument("--score-weak-sites", action="store_true",
+                   help="also score 6mer and offset-6mer sites (many more sites)")
+    s.add_argument("--fdr", type=float, default=0.05, help="q-value threshold of `support`")
+    s.add_argument("--temperature", type=float, default=None,
+                   help="IntaRNA temperature in Celsius (default 37; RNAhybrid has none)")
+    s.add_argument("--calibration-windows", type=int, default=2000,
+                   help="windows of the target regions used by RNAcalibrate "
+                        "(0: no calibration, RNAhybrid ranked by MFE)")
+    s.add_argument("--random-seed", type=int, default=1)
+    s.add_argument("--threads", type=int, default=1)
+    s.add_argument("--estimate", action="store_true",
+                   help="print the sites to score per class and a rough run time, then stop")
+    s.add_argument("--scored-sites", default="")
+    s.add_argument("--scored-targets", default="")
+    s.add_argument("--decoy-scores", default="")
+    s.add_argument("--curves", default="")
+    s.set_defaults(func=cmd_score_sites)
+
+
+    s = sub.add_parser("precursors", help="fold two windows around each candidate (RNAfold)")
+    s.add_argument("--loci", required=True, help="loci.tsv of module A (coordinates)")
+    s.add_argument("--candidates", default="",
+                   help="FASTA whose ids select the loci (default: loci with pass = 1)")
+    s.add_argument("--genomes", required=True, help="reference/genomes.tsv")
+    s.add_argument("--contigs", required=True, help="reference/contigs.tsv")
+    s.add_argument("--temperature", type=float, required=True,
+                   help="folding temperature in Celsius (no default: v0 used 25)")
+    s.add_argument("--flanks", type=int, nargs=2, default=[15, 50], metavar=("SHORT", "LONG"))
+    s.add_argument("--shuffles", type=int, default=1000,
+                   help="dinucleotide shuffles per window for the p-value (0: none)")
+    s.add_argument("--anchor", default="representative", choices=["representative", "locus"],
+                   help="candidate interval: most abundant read or whole locus")
+    s.add_argument("--random-seed", type=int, default=1)
+    s.add_argument("--threads", type=int, default=1, help="RNAfold processes run at a time")
+    s.add_argument("--rnafold", default="RNAfold", help="RNAfold executable")
+    s.add_argument("--out", required=True)
+    s.set_defaults(func=cmd_precursors)
 
     s = sub.add_parser("funnel", help="reads left after each step, per sample")
     s.add_argument("--fastp", nargs="+", required=True, help="fastp JSON reports, one per sample")

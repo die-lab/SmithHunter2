@@ -1,5 +1,6 @@
 """SmithHunter2: small RNA discovery across user-selected genomes (module A, rule `all`),
-target prediction (module B, rule `targets`) and plots + MultiQC (rule `report`)."""
+target prediction (module B, rule `targets`), precursor folding (module B, rule
+`precursors`) and plots + MultiQC (rule `report`)."""
 
 configfile: "config/config.yaml"
 
@@ -9,6 +10,7 @@ include: "rules/preprocess.smk"
 include: "rules/mapping.smk"
 include: "rules/discovery.smk"
 include: "rules/targets.smk"
+include: "rules/precursors.smk"
 include: "rules/report.smk"
 
 

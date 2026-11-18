@@ -85,6 +85,61 @@ if BACTERIAL_SETS:
           f"{', '.join(BACTERIAL_SETS)} are skipped.", file=sys.stderr)
 
 
+PREDICTORS = TARGETS_CFG.get("predictors", ["intarna", "rnahybrid"]) or []
+unknown_predictors = set(PREDICTORS) - {"intarna", "rnahybrid"}
+if unknown_predictors:
+    raise ValueError(f"config: targets.predictors: unknown {sorted(unknown_predictors)} "
+                     "(available: intarna, rnahybrid)")
+
+
+def score_args(wildcards):
+    args = []
+    if TARGETS_CFG.get("score_weak_sites"):
+        args.append("--score-weak-sites")
+    # the organism's temperature: targets.temperature, else the one of the precursors
+    folding = config.get("precursors") or {}
+    temperature = TARGETS_CFG.get("temperature", folding.get("temperature"))
+    if temperature is not None:
+        args.append(f"--temperature {temperature}")
+    for key, flag in (("fdr", "--fdr"), ("calibration_windows", "--calibration-windows")):
+        if TARGETS_CFG.get(key) is not None:
+            args.append(f"{flag} {TARGETS_CFG[key]}")
+    return " ".join(args)
+
+
+# Step 2: energy predictors on the seed sites of candidates and decoys, q-values, support.
+rule score_sites:
+    input:
+        candidates=CANDIDATES,
+        decoys=OUT / "targets/decoys.fasta",
+        regions=OUT / "targets/{tset}/regions.tsv",
+        sites=OUT / "targets/{tset}/sites.tsv",
+    output:
+        sites=OUT / "targets/{tset}/scored_sites.tsv",
+        targets=OUT / "targets/{tset}/scored_targets.tsv",
+        decoys=OUT / "targets/{tset}/decoy_scores.tsv",
+        curves=OUT / "targets/{tset}/fdr_curves.tsv",
+    params:
+        genomes=lambda wc: ",".join(genomes_of_set(wc.tset)),
+        classes=",".join(TARGETS_CFG.get("site_classes", [])),
+        predictors=",".join(PREDICTORS),
+        args=score_args,
+    threads: config.get("threads", 4)
+    log:
+        OUT / "logs/targets/{tset}.score.log",
+    conda:
+        "../envs/rna.yaml"
+    shell:
+        "{SH} score-sites --candidates {input.candidates} --decoys {input.decoys} "
+        "--regions {input.regions} --sites {input.sites} --genomes {params.genomes} "
+        "--seed {SEED} --classes '{params.classes}' --predictors {params.predictors} "
+        "{params.args} --threads {threads} --scored-sites {output.sites} "
+        "--scored-targets {output.targets} --decoy-scores {output.decoys} "
+        "--curves {output.curves} > {log} 2>&1"
+
+
 rule targets:
     input:
         expand(OUT / "targets/{tset}/{f}.tsv", tset=AGO_SETS, f=["sites", "targets", "site_fdr"]),
+        expand(OUT / "targets/{tset}/{f}.tsv", tset=AGO_SETS if PREDICTORS else [],
+               f=["scored_sites", "scored_targets", "fdr_curves"]),
