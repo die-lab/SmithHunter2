@@ -1,0 +1,62 @@
+# SmithHunter2 config for the wAlbB benchmark (written by 02_samples.py from config_template.yaml).
+# Run from $BENCH/@GROUP@ (see 03_run.sh): snakemake -s <repo>/workflow/Snakefile ...
+# Everything except samples, outdir and the adapter is the repository default, so the result
+# shows what the defaults do on a symbiont.
+samples: config/samples.tsv
+outdir: results
+threads: @THREADS@
+
+genomes:
+  wolbachia:
+    fasta: data/wAlbB.fasta
+    role: focus
+    topology: circular
+    annotation: data/wAlbB.gff3
+    targets: none
+  host_mt:
+    fasta: data/AaegL5_mt.fasta
+    role: exclude
+    topology: circular
+  host_nuc:
+    fasta: data/AaegL5_nuc.fasta
+    role: exclude
+
+ambiguous: report
+
+assignment:
+  mode: best
+  evil_max_diff: 1
+
+trimming:
+  adapter_r1: "@ADAPTER@"     # chosen by 02_samples.py (adapter_check.tsv); empty = fastp autodetection
+  adapter_r2: ""
+  min_length: 18
+  max_length: 35
+  extra: ""
+
+mapping:
+  mismatches: 1
+  max_hits: 50
+
+loci:
+  merge_gap: 0
+  peaks: true
+  peak_window: 2
+  peak_pvalue: 0.001
+  background_flank: 50
+  satellite_distance: 10
+  satellite_fraction: 0.1
+  multimap: fractional
+  min_rpm: 5
+  min_count: 5
+  min_samples: null      # 9 libraries per line -> 8
+
+ends:
+  n_thre: 0.5
+  penalty: 0.1
+  five_filter: dominant
+  min_five_fraction: 0.5
+  five_jitter: 1
+  min_five_score: 0.5
+  min_three_score: 0.0
+  min_isolation: 0.5
