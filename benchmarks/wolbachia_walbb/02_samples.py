@@ -84,7 +84,8 @@ def adapter_check(fastq: Path, n: int = 200_000) -> dict:
     mode_len = lengths.most_common(1)[0][0] if lengths else 0
     return {"reads_checked": reads, "adapter": best,
             "adapter_fraction": round(best_n / max(reads, 1), 3),
-            "modal_length": mode_len, "max_length": max(lengths, default=0)}
+            "modal_length": mode_len, "max_length": max(lengths, default=0),
+            **{f"fraction_{name}": round(hits[name] / max(reads, 1), 3) for name in ADAPTERS}}
 
 
 def main() -> None:
@@ -142,11 +143,15 @@ def main() -> None:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]), delimiter="\t")
         w.writeheader()
         w.writerows(rows)
-    median = sorted(fractions)[len(fractions) // 2]
+    def median_of(values):
+        return sorted(values)[len(values) // 2]
+
+    # the adapter with the highest median share over all runs, and that share
+    medians = {name: median_of([r[f"fraction_{name}"] for r in rows]) for name in ADAPTERS}
+    name = max(medians, key=medians.get)
+    median = medians[name]
     if args.adapter == "auto":
-        names = Counter(r["adapter"] for r in rows if r["adapter"])
-        name = names.most_common(1)[0][0] if names else ""
-        adapter = ADAPTERS[name] if name and median >= 0.3 else ""
+        adapter = ADAPTERS[name] if median >= 0.3 else ""
         why = (f"{name} adapter found in {median:.0%} of reads (median)" if adapter else
                f"no known adapter in more than {median:.0%} of reads: fastp autodetection; "
                "check adapter_check.tsv (already trimmed if modal_length is ~22)")

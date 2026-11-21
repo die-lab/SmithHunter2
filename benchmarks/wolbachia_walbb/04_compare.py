@@ -204,8 +204,46 @@ def section_v0(inf: Run, v0_fasta: Path, genome_fasta: Path) -> str:
             f"- SmithHunter2 passing loci overlapping a v0 candidate: {v2_in_v0} of {len(p)}\n")
 
 
+def why_failed(r: dict) -> str:
+    if r["pass"] == "1":
+        return "pass"
+    reasons = []
+    if r["locus_type"] != "peak":
+        reasons.append("background locus")
+    if r["expression_pass"] != "1":
+        reasons.append(f"expression ({r['samples_passing_rpm']} samples)")
+    if r["ends_pass"] != "1":
+        reasons.append(f"ends (5' dominant {r['five_dominant_fraction']}, isolation {r['isolation']})")
+    if r.get("structural_pass", "1") != "1":
+        reasons.append(f"structural ({r['structural']})")
+    return "; ".join(reasons) or "?"
+
+
+def section_positive(runs: list[tuple[str, Run]], positive: Path) -> str:
+    """Known small RNAs (TSV: name, contig, start, end, strand; 1-based): best locus per line."""
+    rows = []
+    for known in read_tsv(positive):
+        q = {"contig": known["contig"], "start": known["start"], "end": known["end"],
+             "strand": known["strand"]}
+        for label, run in runs:
+            hits = [r for r in run.loci if overlaps(r, q)]
+            passing = [r for r in hits if r["pass"] == "1"]
+            best = max(passing or hits, key=lambda r: float(r["total_count"]), default=None)
+            reads = sum(float(r["total_count"]) for r in hits)
+            if best is None:
+                rows.append([known["name"], label, 0, 0, "-", "-", "no locus"])
+            else:
+                rows.append([known["name"], label, len(hits), fmt(reads), best["locus_id"],
+                             f"{best['rep_sequence']} ({fmt(float(best['total_count']))})", why_failed(best)])
+    return ("## Positive control (known small RNAs)\n\nLoci overlapping each region on its strand; "
+            "the best is the passing locus with most reads, or the locus with most reads.\n\n"
+            + table(["small RNA", "line", "loci", "reads", "best locus", "sequence (reads)", "status"], rows) + "\n")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--positive", type=Path,
+                    help="TSV name, contig, start, end, strand (1-based) of known small RNAs")
     ap.add_argument("--infected", required=True, type=Path, help="results dir of the infected line")
     ap.add_argument("--tet", type=Path, help="results dir of the tetracycline-cleared line")
     ap.add_argument("--genome", default="wolbachia")
@@ -218,8 +256,11 @@ def main() -> None:
     out = [f"# SmithHunter2 loci of `{args.genome}`\n",
            "## Infected line\n", section_reads(inf, "infected"), section_loci(inf, "infected"),
            section_annotation(inf, "infected"), section_sweep(inf, "infected", args.min_samples)]
-    if args.tet:
-        out.append(section_tet(inf, Run(args.tet, args.genome)))
+    tet = Run(args.tet, args.genome) if args.tet else None
+    if tet:
+        out.append(section_tet(inf, tet))
+    if args.positive:
+        out.append(section_positive([("infected", inf)] + ([("tet", tet)] if tet else []), args.positive))
     if args.v0_fasta:
         if not args.genome_fasta:
             sys.exit("--v0-fasta needs --genome-fasta")

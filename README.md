@@ -172,6 +172,7 @@ Other settings, with their defaults:
 | `loci.multimap` | `fractional` | `fractional` or `unique` within one genome |
 | `loci.min_rpm` / `min_count` | 5 / 5 | per-sample thresholds (reads per million and raw reads) |
 | `loci.min_samples` | n − 1 | samples that must reach both thresholds |
+| `loci.exclude_structural` | `none` | drop loci overlapping a structural RNA (tRNA, rRNA, tmRNA, RNase P, SRP, 6S, snoRNA...; needs the annotation): `none`, `sense` (fragments of the RNA itself) or `any` (both strands). Advised `sense` for bacterial symbionts (see Benchmarks on real data) |
 | `ends.five_filter` | `dominant` | how the 5' end is tested: `dominant`, `jitter` or `score` (below) |
 | `ends.min_five_fraction` | 0.5 | `dominant` / `jitter`: a locus passes if this share of its reads starts at (near) the top 5' position |
 | `ends.five_jitter` | 1 | `jitter`: bases on each side of the top 5' position that still count |
@@ -224,7 +225,8 @@ Main columns of `loci.tsv`:
 | `five_score`, `three_score` | end precision (see above); `*_dominant_fraction` = share of the top position; `five_jitter_fraction` = share within `five_jitter` nt of it |
 | `isolation` | share of the reads starting near the peak that belong to the locus |
 | `annotation_class`, `annotation_orientation` | most specific overlapping GFF3 feature and its strand relation |
-| `expression_pass`, `ends_pass`, `pass` | filter results |
+| `structural` | `sense` / `antisense` when the locus overlaps a structural RNA (by GFF type, or by gene name / product for ncRNA, exon and gene features), empty otherwise |
+| `expression_pass`, `ends_pass`, `structural_pass`, `pass` | filter results |
 
 ### Plots and QC report
 
@@ -644,7 +646,35 @@ simulated small RNA.
 - A peak locus also contains degradation fragments that start at the same position,
   so its `end` can extend beyond the small RNA; `rep_sequence` is the reliable sequence.
 - Reads from 3' tRNA fragments carry a non-templated CCA and usually do not align.
-- 5' tRNA fragments look like genuine small RNAs: use `annotation_class` to tell them apart.
+- 5' tRNA fragments look like genuine small RNAs: use `annotation_class` / `structural` to tell
+  them apart, or drop them with `loci.exclude_structural`.
+
+## Benchmarks on real data (module A on a bacterial symbiont)
+
+`benchmarks/` holds infected vs uninfected (tetracycline-cured or naturally uninfected)
+*Wolbachia* small RNA-seq studies. Every *Wolbachia* locus passing in the uninfected line is a
+false positive; known *Wolbachia* small RNAs (WsnRNA-46 and WsnRNA-59, Rfam RF02625 / RF02626,
+Mayoral et al. 2014) are the positive control where the strain carries them.
+
+| study | host, strain | libraries (infected + uninfected) | scripts |
+|---|---|---|---|
+| PRJNA671731 (Sci Rep 2022) | *Aedes aegypti* adults, wAlbB | 9 + 9 (tetracycline) | `wolbachia_walbb/` |
+| PRJNA238976 / GSE55210 (Mayoral 2014) | *Ae. aegypti* Aag2 cells, wMelPop | 2 + 2 (uninfected line) | `wolbachia_multi/` (data already used in module B) |
+| PRJEB9710 (Rainey 2016) | *Drosophila* JW18 cells, wMel | 5 + 5 (tetracycline) | `wolbachia_multi/prepare.py --study jw18` |
+| PRJNA439370 (He 2019) | *D. melanogaster* ovaries, wMel | 3 + 3 (tetracycline) | `wolbachia_multi/prepare.py --study ovary` |
+
+`wolbachia_walbb/05_variants.py` re-runs only `discover` with other settings on a finished
+benchmark (minutes), `06_summary.py` tabulates candidates, false positives, structural share and
+the positive controls over benchmarks and variants. Results so far (repository defaults):
+
+| study | infected passing | uninfected passing | structural (share of their reads) | WsnRNA-46 / -59 |
+|---|---|---|---|---|
+| wAlbB adults | 157 | 0 | 40 (58%) | absent from wAlbB |
+| wMelPop Aag2 cells | 570 | 0 | 67 (88%) | reads but fails / **passes** |
+
+No false positives so far: the genome assignment keeps host reads off the symbiont. The excess of
+candidates comes from fragments of abundant structural RNAs and from a lenient expression
+threshold (the candidate count halves from `min_rpm` 5 to 10).
 
 ## Testing
 

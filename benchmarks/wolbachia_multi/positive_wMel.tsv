@@ -1,0 +1,3 @@
+name	contig	start	end	strand	source
+WsnRNA-46	NC_002978.6	1204493	1204642	+	Rfam RF02625 precursor in wMel (AE017196.1 = NC_002978.6); Mayoral et al. 2014 PNAS
+WsnRNA-59	NC_002978.6	582143	582231	-	Rfam RF02626 precursor in wMel; Mayoral et al. 2014 PNAS

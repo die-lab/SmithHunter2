@@ -38,7 +38,9 @@ if [ "$STEP" = all ] || [ "$STEP" = tet ]; then
         cp -a "$BENCH/infected/results/reference" "$BENCH/tet/results/"
     fi
     cd "$BENCH/tet"
-    if $SNAKE -n 2>/dev/null | grep -q "bowtie_index"; then
+    # capture first: with pipefail, grep -q closing the pipe early can make the test false
+    plan=$($SNAKE -n 2>/dev/null || true)
+    if grep -q "bowtie_index" <<< "$plan"; then
         echo "tet run would rebuild the bowtie index; touching the copied reference" >&2
         $SNAKE --touch "results/reference/combined.fa" "results/reference/index" >/dev/null 2>&1 || true
     fi
@@ -48,7 +50,8 @@ fi
 if [ "$STEP" = all ] || [ "$STEP" = compare ]; then
     cd "$BENCH"
     python3 "$HERE/04_compare.py" --infected infected/results --tet tet/results \
-        --genome wolbachia --genome-fasta data/wAlbB.fasta \
+        --genome wolbachia --genome-fasta "${GENOME_FASTA:-data/wAlbB.fasta}" \
+        ${POSITIVE:+--positive "$POSITIVE"} \
         ${V0_FASTA:+--v0-fasta "$V0_FASTA"} | tee compare_report.md
     echo "report: $BENCH/compare_report.md"
 fi

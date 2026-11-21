@@ -22,13 +22,22 @@ CLASS_PRIORITY = ("tRNA", "rRNA", "tmRNA", "RNase_P_RNA", "RNase_MRP_RNA", "SRP_
 # Abundant structural (housekeeping) RNAs: their degradation fragments are frequent and pass
 # expression and end filters (wAlbB benchmark: 25% of the candidates, 58% of their reads).
 STRUCTURAL_TYPES = {"tRNA", "rRNA", "tmRNA", "RNase_P_RNA", "RNase_MRP_RNA", "SRP_RNA",
-                    "snoRNA", "snRNA", "scRNA", "telomerase_RNA", "Y_RNA", "vault_RNA"}
-# ncRNA features recognised by gene name: tmRNA (ssrA), 6S RNA (ssrS), RNase P (rnpB),
-# SRP / 4.5S (ffs), 7SK / 7SL; rRNA names when the type is generic.
+                    "snoRNA", "snRNA", "scaRNA", "scRNA", "telomerase_RNA", "Y_RNA", "vault_RNA"}
+# Gene / feature names of structural RNAs: tmRNA (ssrA), 6S (ssrS), RNase P (rnpB), SRP / 4.5S
+# (ffs), rRNA genes; FlyBase-style names (7SLRNA:CR42652, snRNA:7SK, snoRNA:Psi18S-110).
 STRUCTURAL_NAMES = re.compile(
     r"^(ssrA|ssrS|rnpB|ffs|rrs|rrl|rrf|RN7SK|RN7SL\d*|RNY\d*|5S|5\.8S|16S|18S|23S|28S|6S|4\.5S)$"
-    r"|tmRNA|transfer-messenger|RNase P|signal recognition particle|\b6S RNA|ribosomal RNA",
+    r"|^(7SLRNA|7SKRNA|snRNA|snoRNA|scaRNA|mt:[sl]rRNA|5SrRNA|5\.8SrRNA|18SrRNA|28SrRNA|tRNA)[:_-]",
     re.IGNORECASE)
+# Products of structural RNAs. Only read on RNA features (gbkey / type not mRNA or CDS): the
+# exons of mRNAs carry protein products such as "signal recognition particle 54 kDa protein".
+STRUCTURAL_PRODUCTS = re.compile(
+    r"tmRNA|transfer-messenger|RNase P|RNase MRP|signal recognition particle|\b(6S|7SK|7SL|4\.5S)\b"
+    r"|ribosomal RNA|\b(5S|5\.8S|16S|18S|23S|28S|12S) r?RNA",
+    re.IGNORECASE)
+# gbkey of NCBI features that belong to an RNA gene (an exon of a tRNA has gbkey=tRNA)
+_RNA_GBKEYS = {"ncRNA", "misc_RNA", "rRNA", "tRNA", "tmRNA", "precursor_RNA"}
+_STRUCTURAL_GBKEYS = {"rRNA", "tRNA", "tmRNA"}
 
 
 @dataclass
@@ -39,18 +48,23 @@ class Feature:
     type: str
     name: str
     product: str = ""
+    gbkey: str = ""         # NCBI GFF3 attribute
+    ncrna_class: str = ""   # NCBI GFF3 attribute (ncRNA features of older annotations)
 
 
-# Types whose name / product may identify a structural RNA (never protein-coding features:
-# "ribosomal RNA methyltransferase" is a CDS product).
-_NAMED_RNA_TYPES = {"ncRNA", "misc_RNA", "exon", "gene", "transcript", "primary_transcript"}
+# Types whose name may identify a structural RNA (never CDS / mRNA).
+_NAMED_TYPES = {"ncRNA", "misc_RNA", "exon", "gene", "transcript", "primary_transcript", "pseudogene"}
 
 
 def is_structural(f: Feature) -> bool:
-    if f.type in STRUCTURAL_TYPES:
+    if f.type in STRUCTURAL_TYPES or f.ncrna_class in STRUCTURAL_TYPES or f.gbkey in _STRUCTURAL_GBKEYS:
         return True
-    return f.type in _NAMED_RNA_TYPES and bool(
-        STRUCTURAL_NAMES.search(f.name) or (f.product and STRUCTURAL_NAMES.search(f.product)))
+    if f.gbkey in ("mRNA", "CDS") or f.type not in _NAMED_TYPES:
+        return False
+    if STRUCTURAL_NAMES.search(f.name):
+        return True
+    rna_feature = f.type in ("ncRNA", "misc_RNA") or f.gbkey in _RNA_GBKEYS
+    return bool(rna_feature and f.product and STRUCTURAL_PRODUCTS.search(f.product))
 
 
 def structural(features: list[Feature], strand: str) -> str:
@@ -88,7 +102,8 @@ class Annotation:
                 attrs = dict(kv.split("=", 1) for kv in f[8].split(";") if "=" in kv)
                 name = attrs.get("Name") or attrs.get("gene") or attrs.get("ID") or "."
                 features[f[0]].append(Feature(int(f[3]) - 1, int(f[4]), f[6], f[2], unquote(name),
-                                              unquote(attrs.get("product", ""))))
+                                              unquote(attrs.get("product", "")),
+                                              attrs.get("gbkey", ""), attrs.get("ncrna_class", "")))
         return cls(features)
 
     def overlaps(self, contig: str, start: int, end: int) -> list[Feature]:
