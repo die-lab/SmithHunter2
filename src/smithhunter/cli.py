@@ -86,7 +86,7 @@ def cmd_discover(args):
         background_flank=args.background_flank, satellite_distance=args.satellite_distance,
         satellite_fraction=args.satellite_fraction, min_isolation=args.min_isolation,
         five_filter=args.five_filter, min_five_fraction=args.min_five_fraction,
-        five_jitter=args.five_jitter)
+        five_jitter=args.five_jitter, exclude_structural=args.exclude_structural)
     write_tsv(args.loci, rows, locus_columns(samples))
     write_tsv(args.reads, reads, READ_COLUMNS)
     write_fasta(args.fasta, rows)
@@ -378,6 +378,10 @@ def main(argv=None):
     s.add_argument("--five-jitter", type=int, default=1)
     s.add_argument("--min-three", type=float, default=0.0)
     s.add_argument("--min-isolation", type=float, default=0.5)
+    s.add_argument("--exclude-structural", default="none", choices=["none", "sense", "any"],
+                   help="drop loci overlapping structural RNAs (tRNA, rRNA, tmRNA, RNase P, SRP, "
+                        "6S, snoRNA...) on the same strand (sense) or either strand (any); needs "
+                        "the genome annotation")
     s.add_argument("--loci", required=True)
     s.add_argument("--reads", required=True)
     s.add_argument("--fasta", required=True)

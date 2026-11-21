@@ -111,7 +111,13 @@ def section_annotation(run: Run, label: str) -> str:
     if not p:
         return f"### Passing loci by annotation ({label})\n\nnone\n"
     cls = Counter((r.get("annotation_class", "NA"), r.get("annotation_orientation", "")) for r in p)
-    structural = [r for r in p if STRUCTURAL.search(r.get("annotation_types", "") + " " + r.get("annotation_names", ""))]
+    if "structural" in p[0]:   # column written by `discover` since the structural filter
+        structural = [r for r in p if r["structural"]]
+        sense = sum(r["structural"] == "sense" for r in structural)
+        split = f" ({sense} sense, {len(structural) - sense} antisense)"
+    else:
+        structural = [r for r in p if STRUCTURAL.search(r.get("annotation_types", "") + " " + r.get("annotation_names", ""))]
+        split = ""
     rows = [[c, o or "-", n] for (c, o), n in cls.most_common()]
     reads_all = sum(float(r["total_count"]) for r in p)
     reads_struct = sum(float(r["total_count"]) for r in structural)
@@ -121,7 +127,7 @@ def section_annotation(run: Run, label: str) -> str:
                  (r.get("annotation_names", "") or "")[:40], r["rep_sequence"]] for r in top]
     return (f"### Passing loci by annotation ({label})\n\n" + table(["class", "orientation", "loci"], rows)
             + f"\n\nOverlapping structural RNAs (rRNA, tRNA, tmRNA, RNase P, SRP, 6S): **{len(structural)} of {len(p)}** "
-              f"loci, {reads_struct / reads_all:.0%} of their reads.\n\nTop 15 by reads:\n\n"
+              f"loci{split}, {reads_struct / reads_all:.0%} of their reads.\n\nTop 15 by reads:\n\n"
             + table(["locus", "position", "len", "reads", "samples", "class", "names", "rep_sequence"], top_rows) + "\n")
 
 

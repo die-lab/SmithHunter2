@@ -26,8 +26,17 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-TRUSEQ = "TGGAATTCTCGGGTGCCAAGG"   # Illumina TruSeq small RNA 3' adapter
-PROBE = TRUSEQ[:12]
+# Common 3' adapters of small RNA libraries. The PRJNA671731 runs carry the Illumina universal
+# adapter, not the TruSeq small RNA one: checking only the latter reported 0% and left the choice
+# to fastp autodetection (which found the right one, 98.7% of the reads trimmed).
+ADAPTERS = {
+    "truseq_small_rna": "TGGAATTCTCGGGTGCCAAGG",
+    "illumina_universal": "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA",   # also NEBNext small RNA
+    "qiaseq_mirna": "AACTGTAGGCACCATCAAT",
+    "nextflex_v3_solid": "TCGTATGCCGTCTTCTGCTTG",
+}
+PROBE_LEN = 12
+TRUSEQ = ADAPTERS["truseq_small_rna"]
 SMALL_RNA = {"mirna-seq", "ncrna-seq"}
 
 
@@ -56,7 +65,9 @@ def guess_age(run: dict) -> str:
 
 
 def adapter_check(fastq: Path, n: int = 200_000) -> dict:
-    lengths, with_adapter, reads = Counter(), 0, 0
+    """Share of the first n reads containing the first 12 nt of each known adapter."""
+    lengths, hits, reads = Counter(), Counter(), 0
+    probes = {name: seq[:PROBE_LEN] for name, seq in ADAPTERS.items()}
     with gzip.open(fastq, "rt") as fh:
         for i, line in enumerate(fh):
             if i % 4 != 1:
@@ -64,12 +75,15 @@ def adapter_check(fastq: Path, n: int = 200_000) -> dict:
             seq = line.strip()
             reads += 1
             lengths[len(seq)] += 1
-            if PROBE in seq:
-                with_adapter += 1
+            for name, probe in probes.items():
+                if probe in seq:
+                    hits[name] += 1
             if reads >= n:
                 break
+    best, best_n = (hits.most_common(1)[0] if hits else ("", 0))
     mode_len = lengths.most_common(1)[0][0] if lengths else 0
-    return {"reads_checked": reads, "adapter_fraction": round(with_adapter / max(reads, 1), 3),
+    return {"reads_checked": reads, "adapter": best,
+            "adapter_fraction": round(best_n / max(reads, 1), 3),
             "modal_length": mode_len, "max_length": max(lengths, default=0)}
 
 
@@ -130,10 +144,12 @@ def main() -> None:
         w.writerows(rows)
     median = sorted(fractions)[len(fractions) // 2]
     if args.adapter == "auto":
-        adapter = TRUSEQ if median >= 0.3 else ""
-        why = (f"TruSeq adapter found in {median:.0%} of reads (median)" if adapter else
-               f"TruSeq adapter in only {median:.0%} of reads: fastp autodetection; check "
-               "adapter_check.tsv (already trimmed if modal_length is ~22)")
+        names = Counter(r["adapter"] for r in rows if r["adapter"])
+        name = names.most_common(1)[0][0] if names else ""
+        adapter = ADAPTERS[name] if name and median >= 0.3 else ""
+        why = (f"{name} adapter found in {median:.0%} of reads (median)" if adapter else
+               f"no known adapter in more than {median:.0%} of reads: fastp autodetection; "
+               "check adapter_check.tsv (already trimmed if modal_length is ~22)")
     else:
         adapter = "" if args.adapter == "none" else args.adapter.upper()
         why = "from --adapter"

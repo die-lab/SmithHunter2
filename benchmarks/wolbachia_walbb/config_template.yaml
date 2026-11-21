@@ -50,6 +50,7 @@ loci:
   min_rpm: 5
   min_count: 5
   min_samples: null      # 9 libraries per line -> 8
+  exclude_structural: none   # repository default; the report counts structural loci anyway
 
 ends:
   n_thre: 0.5

@@ -31,7 +31,12 @@ import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from .annotate import Annotation, describe
+from .annotate import Annotation, describe, structural
+
+# loci.exclude_structural: which loci overlapping a structural RNA (tRNA, rRNA, tmRNA, RNase P,
+# SRP, 6S, snoRNA, ...) are kept out of the candidates. "none" keeps all (tRNA fragments can be
+# real small RNAs); "sense" drops fragments of the RNA itself; "any" drops both strands.
+STRUCTURAL_FILTERS = ("none", "sense", "any")
 from .ends import FIVE_FILTERS, end_score, jitter_fraction
 from .seqio import open_text, read_tsv
 
@@ -197,9 +202,12 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
              merge_gap=0, min_rpm=5.0, min_count=1, min_samples=None, n_thre=0.5, penalty=0.1,
              min_five=0.5, min_three=0.0, peaks=True, peak_window=2, peak_pvalue=0.001,
              background_flank=50, satellite_distance=10, satellite_fraction=0.1,
-             min_isolation=0.5, five_filter="dominant", min_five_fraction=0.5, five_jitter=1):
+             min_isolation=0.5, five_filter="dominant", min_five_fraction=0.5, five_jitter=1,
+             exclude_structural="none"):
     if five_filter not in FIVE_FILTERS:
         raise ValueError(f"five_filter must be one of {FIVE_FILTERS}")
+    if exclude_structural not in STRUCTURAL_FILTERS:
+        raise ValueError(f"exclude_structural must be one of {STRUCTURAL_FILTERS}")
     samples, counts = load_counts(counts_path)
     library = {r["sample"]: float(r["reads_kept"]) for r in read_tsv(libraries_path)}
     genomes = {g["name"]: g for g in read_tsv(genomes_path)}
@@ -286,9 +294,13 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
             if locus.wraps:
                 feats += ann.overlaps(locus.contig, 0, locus.end - length)
             annotation = describe(feats, locus.strand)
+            struct = structural(feats, locus.strand)
         else:
             annotation = {"annotation_class": "NA", "annotation_types": "", "annotation_names": "",
                           "annotation_orientation": ""}
+            struct = ""
+        struct_pass = not ((exclude_structural == "any" and struct)
+                           or (exclude_structural == "sense" and struct == "sense"))
 
         expr_pass = n_pass >= min_samples
         if five_filter == "dominant":
@@ -313,9 +325,10 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
             "five_jitter_fraction": round(five_jit, 4),
             "three_score": round(three_score, 4), "three_dominant_fraction": round(three_dom, 4),
             "isolation": round(locus.isolation, 4),
-            **annotation,
+            **annotation, "structural": struct,
             "expression_pass": int(expr_pass), "ends_pass": int(ends_pass),
-            "pass": int(candidate and expr_pass and ends_pass),
+            "structural_pass": int(struct_pass),
+            "pass": int(candidate and expr_pass and ends_pass and struct_pass),
         }
         for s, c, r, rg in zip(samples, per_sample, rpm, rpm_genome):
             row[f"count_{s}"] = round(c, 3)
@@ -330,7 +343,8 @@ LOCUS_COLUMNS = [
     "locus_type", "rep_id", "rep_sequence", "rep_length", "rep_start", "rep_end", "unique_reads",
     "total_count", "background_count", "samples_passing_rpm", "five_score", "five_dominant_fraction",
     "five_jitter_fraction", "three_score", "three_dominant_fraction", "isolation", "annotation_class", "annotation_types",
-    "annotation_names", "annotation_orientation", "expression_pass", "ends_pass", "pass",
+    "annotation_names", "annotation_orientation", "structural", "expression_pass", "ends_pass",
+    "structural_pass", "pass",
 ]
 READ_COLUMNS = ["locus_id", "read_id", "sequence", "start", "end", "weight", "count"]
 
@@ -346,5 +360,6 @@ def write_fasta(path: str, rows: list[dict]) -> None:
             if r["pass"]:
                 fh.write(f">{r['locus_id']} {r['genome']}|{r['contig']}:{r['rep_start']}-"
                          f"{r['rep_end']}({r['strand']}) locus={r['start']}-{r['end']} "
-                         f"count={r['total_count']} class={r['annotation_class']}\n"
+                         f"count={r['total_count']} class={r['annotation_class']}"
+                         f"{' structural=' + r['structural'] if r.get('structural') else ''}\n"
                          f"{r['rep_sequence']}\n")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from bisect import bisect_left
 from collections import defaultdict
 from dataclasses import dataclass
@@ -11,9 +12,23 @@ from .seqio import open_text
 
 SKIP_TYPES = {"region", "chromosome", "source", "databank_entry", "contig", "scaffold"}
 # Most specific first: the first type found among the overlaps becomes the class.
-CLASS_PRIORITY = ("tRNA", "rRNA", "snoRNA", "snRNA", "miRNA", "pre_miRNA", "piRNA", "ncRNA",
+# tmRNA, RNase_P_RNA, SRP_RNA, antisense_RNA are the NCBI types of prokaryotic housekeeping /
+# regulatory RNAs: without them such loci fell through to their child "exon".
+CLASS_PRIORITY = ("tRNA", "rRNA", "tmRNA", "RNase_P_RNA", "RNase_MRP_RNA", "SRP_RNA",
+                  "snoRNA", "snRNA", "miRNA", "pre_miRNA", "piRNA", "antisense_RNA", "ncRNA",
                   "lnc_RNA", "rep_origin", "D_loop", "repeat_region", "five_prime_UTR",
                   "three_prime_UTR", "CDS", "exon", "mRNA", "transcript", "gene")
+
+# Abundant structural (housekeeping) RNAs: their degradation fragments are frequent and pass
+# expression and end filters (wAlbB benchmark: 25% of the candidates, 58% of their reads).
+STRUCTURAL_TYPES = {"tRNA", "rRNA", "tmRNA", "RNase_P_RNA", "RNase_MRP_RNA", "SRP_RNA",
+                    "snoRNA", "snRNA", "scRNA", "telomerase_RNA", "Y_RNA", "vault_RNA"}
+# ncRNA features recognised by gene name: tmRNA (ssrA), 6S RNA (ssrS), RNase P (rnpB),
+# SRP / 4.5S (ffs), 7SK / 7SL; rRNA names when the type is generic.
+STRUCTURAL_NAMES = re.compile(
+    r"^(ssrA|ssrS|rnpB|ffs|rrs|rrl|rrf|RN7SK|RN7SL\d*|RNY\d*|5S|5\.8S|16S|18S|23S|28S|6S|4\.5S)$"
+    r"|tmRNA|transfer-messenger|RNase P|signal recognition particle|\b6S RNA|ribosomal RNA",
+    re.IGNORECASE)
 
 
 @dataclass
@@ -23,6 +38,32 @@ class Feature:
     strand: str
     type: str
     name: str
+    product: str = ""
+
+
+# Types whose name / product may identify a structural RNA (never protein-coding features:
+# "ribosomal RNA methyltransferase" is a CDS product).
+_NAMED_RNA_TYPES = {"ncRNA", "misc_RNA", "exon", "gene", "transcript", "primary_transcript"}
+
+
+def is_structural(f: Feature) -> bool:
+    if f.type in STRUCTURAL_TYPES:
+        return True
+    return f.type in _NAMED_RNA_TYPES and bool(
+        STRUCTURAL_NAMES.search(f.name) or (f.product and STRUCTURAL_NAMES.search(f.product)))
+
+
+def structural(features: list[Feature], strand: str) -> str:
+    """'sense' / 'antisense' when the locus overlaps a structural RNA, '' otherwise.
+
+    Sense wins when structural RNAs lie on both strands; unstranded features count as sense.
+    """
+    hits = [f for f in features if is_structural(f)]
+    if not hits:
+        return ""
+    if any(f.strand == strand or f.strand not in "+-" for f in hits):
+        return "sense"
+    return "antisense"
 
 
 class Annotation:
@@ -46,7 +87,8 @@ class Annotation:
                     continue
                 attrs = dict(kv.split("=", 1) for kv in f[8].split(";") if "=" in kv)
                 name = attrs.get("Name") or attrs.get("gene") or attrs.get("ID") or "."
-                features[f[0]].append(Feature(int(f[3]) - 1, int(f[4]), f[6], f[2], unquote(name)))
+                features[f[0]].append(Feature(int(f[3]) - 1, int(f[4]), f[6], f[2], unquote(name),
+                                              unquote(attrs.get("product", ""))))
         return cls(features)
 
     def overlaps(self, contig: str, start: int, end: int) -> list[Feature]:

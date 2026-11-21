@@ -70,6 +70,12 @@ loci:
   min_rpm: 5             # reads per million (library total) in one sample
   min_count: 5           # and at least this many reads in that sample
   min_samples: null      # samples that must reach min_rpm; null -> number of samples - 1
+  # Loci overlapping structural RNAs (tRNA, rRNA, tmRNA, RNase P, SRP, 6S, snoRNA...; needs the
+  # genome annotation): none = keep (tRNA fragments can be real small RNAs), sense = drop the
+  # fragments of the RNA itself, any = drop both strands. Always reported in loci.tsv (column
+  # `structural`). For a bacterial symbiont `sense` is advised (wAlbB benchmark: 25% of the
+  # candidates, 58% of their reads were sense fragments of tRNA / rRNA / 6S RNA).
+  exclude_structural: none
 
 ends:
   n_thre: 0.5            # fraction of reads used to find the dominant end positions
