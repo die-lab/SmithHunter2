@@ -129,6 +129,30 @@ def test_min_rpm_genome(tmp_path):
     assert rows[0]["rpm_genome_s1"] == 625000.0
 
 
+def test_exact_fraction(tmp_path):
+    alignments, counts, libs, genomes, contigs = inputs(tmp_path)
+    text = open(alignments).read().replace("u2\tbact\tc1\t10\t29\t+\t1\t0", "u2\tbact\tc1\t10\t29\t+\t1\t1")
+    text = text.replace("u3\tbact\tc1\t500\t520\t-\t1\t0", "u3\tbact\tc1\t500\t520\t-\t1\t1")
+    open(alignments, "w").write(text)
+    args = (alignments, counts, libs, genomes, contigs)
+    _, rows, _ = discover(*args, min_rpm=5, min_samples=2)
+    assert [r["exact_fraction"] for r in rows] == [round(170 / 200, 4), 0.0]   # u1 170 of 200
+    assert [r["pass"] for r in rows] == [1, 1]                                 # off by default
+    _, rows, _ = discover(*args, min_rpm=5, min_samples=2, min_exact_fraction=0.5)
+    assert [r["exact_pass"] for r in rows] == [1, 0]
+    assert [r["pass"] for r in rows] == [1, 0]
+
+
+def test_circular_wrap_keeps_mismatches(tmp_path):
+    from smithhunter.loci import Member, build_loci, fold_origin, Locus
+    ms = [Member("a", 990, 1010, 1.0, 5.0, (5.0,), 1), Member("b", 0, 15, 1.0, 5.0, (5.0,), 0)]
+    loci = build_loci("g", "c", "+", ms, 0, 1000, True)
+    assert sorted(m.mismatches for l in loci for m in l.members) == [0, 1]
+    shifted = fold_origin(Locus("g", "c", "+", 1005, 1020, [Member("x", 1005, 1020, 1.0, 1.0, (1.0,), 1)]),
+                          1000, True)
+    assert shifted.members[0].mismatches == 1 and shifted.start == 5
+
+
 def test_exclude_structural_rejects_unknown_mode(tmp_path):
     with pytest.raises(ValueError):
         discover(*inputs(tmp_path), exclude_structural="tRNA")

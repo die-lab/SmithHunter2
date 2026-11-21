@@ -87,7 +87,7 @@ def cmd_discover(args):
         satellite_fraction=args.satellite_fraction, min_isolation=args.min_isolation,
         five_filter=args.five_filter, min_five_fraction=args.min_five_fraction,
         five_jitter=args.five_jitter, exclude_structural=args.exclude_structural,
-        min_rpm_genome=args.min_rpm_genome)
+        min_rpm_genome=args.min_rpm_genome, min_exact_fraction=args.min_exact_fraction)
     write_tsv(args.loci, rows, locus_columns(samples))
     write_tsv(args.reads, reads, READ_COLUMNS)
     write_fasta(args.fasta, rows)
@@ -386,6 +386,9 @@ def main(argv=None):
                    help="drop loci overlapping structural RNAs (tRNA, rRNA, tmRNA, RNase P, SRP, "
                         "6S, snoRNA...) on the same strand (sense) or either strand (any); needs "
                         "the genome annotation")
+    s.add_argument("--min-exact-fraction", type=float, default=0.0,
+                   help="share of the locus reads aligned without mismatches (0 = off); low "
+                        "values flag reads of an organism missing from the reference")
     s.add_argument("--loci", required=True)
     s.add_argument("--reads", required=True)
     s.add_argument("--fasta", required=True)

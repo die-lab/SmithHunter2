@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .annotate import Annotation, describe, structural
 
@@ -49,6 +49,7 @@ class Member:
     weight: float
     count: float = 0.0  # weight x reads in all samples
     counts: tuple = ()  # weight x reads per sample
+    mismatches: int = 0  # of this alignment
 
 
 @dataclass
@@ -81,8 +82,7 @@ def build_loci(genome, contig, strand, members, gap, length, circular) -> list[L
     loci = [Locus(genome, contig, strand, s, e, ms) for s, e, ms in blocks]
     if circular and len(loci) > 1 and loci[-1].end + gap - length >= loci[0].start:
         first, last = loci.pop(0), loci[-1]
-        shifted = [Member(m.read_id, m.start + length, m.end + length, m.weight, m.count, m.counts)
-                   for m in first.members]
+        shifted = [replace(m, start=m.start + length, end=m.end + length) for m in first.members]
         last.members.extend(shifted)
         last.end = max(last.end, first.end + length)
     for locus in loci:
@@ -178,8 +178,7 @@ def split_peaks(block: Locus, window: int = 2, pvalue: float = 0.001, flank: int
 def fold_origin(locus: Locus, length: int, circular: bool) -> Locus:
     """Bring a locus that lies past the end of a circular contig back to the origin."""
     if circular and locus.start >= length:
-        locus.members = [Member(m.read_id, m.start - length, m.end - length, m.weight, m.count,
-                                m.counts)
+        locus.members = [replace(m, start=m.start - length, end=m.end - length)
                          for m in locus.members]
         locus.start -= length
         locus.end -= length
@@ -203,7 +202,7 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
              min_five=0.5, min_three=0.0, peaks=True, peak_window=2, peak_pvalue=0.001,
              background_flank=50, satellite_distance=10, satellite_fraction=0.1,
              min_isolation=0.5, five_filter="dominant", min_five_fraction=0.5, five_jitter=1,
-             exclude_structural="none", min_rpm_genome=0.0):
+             exclude_structural="none", min_rpm_genome=0.0, min_exact_fraction=0.0):
     if five_filter not in FIVE_FILTERS:
         raise ValueError(f"five_filter must be one of {FIVE_FILTERS}")
     if exclude_structural not in STRUCTURAL_FILTERS:
@@ -220,14 +219,15 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
     with open_text(alignments_path) as fh:
         fh.readline()
         for line in fh:
-            rid, genome, contig, start, end, strand, weight, _ = line.rstrip("\n").split("\t")
+            rid, genome, contig, start, end, strand, weight, mm = line.rstrip("\n").split("\t")
             g = genomes[genome]
             seq, row = counts[rid]
             if not int(g["min_length"]) <= len(seq) <= int(g["max_length"]):
                 continue
             w = float(weight)
             grouped[(genome, contig, strand)].append(
-                Member(rid, int(start), int(end), w, w * sum(row), tuple(w * c for c in row)))
+                Member(rid, int(start), int(end), w, w * sum(row), tuple(w * c for c in row),
+                       int(mm) if mm.isdigit() else 0))
             totals = genome_totals[genome]
             for i, c in enumerate(row):
                 totals[i] += w * c
@@ -255,6 +255,7 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
         locus_id = f"{locus.genome}_{serial[locus.genome]:05d}"
         length = int(contigs[(locus.genome, locus.contig)]["length"])
         per_sample = [0.0] * len(samples)
+        exact = 0.0  # reads aligned without mismatches
         per_read: dict[str, float] = defaultdict(float)
         five: dict[int, float] = defaultdict(float)
         three: dict[int, float] = defaultdict(float)
@@ -264,6 +265,8 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
                 per_sample[i] += m.weight * c
             w = m.weight * sum(row)
             per_read[m.read_id] += w
+            if m.mismatches == 0:
+                exact += w
             five_pos, three_pos = (m.start, m.end - 1) if locus.strand == "+" else (m.end - 1, m.start)
             five[five_pos] += w
             three[three_pos] += w
@@ -305,6 +308,13 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
             struct = ""
         struct_pass = not ((exclude_structural == "any" and struct)
                            or (exclude_structural == "sense" and struct == "sense"))
+        # Reads of another organism (a missing genome) land on conserved sequence with
+        # mismatches: the false positives of the spider mite negative control had 0% exact
+        # reads, its known small RNAs 85-97%. Off by default: a strain different from the
+        # reference gives real loci on SNPs 0% too.
+        total = sum(per_sample)
+        exact_fraction = exact / total if total else 0.0
+        exact_pass = exact_fraction >= min_exact_fraction - 1e-9
 
         expr_pass = n_pass >= min_samples
         if five_filter == "dominant":
@@ -329,10 +339,10 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
             "five_jitter_fraction": round(five_jit, 4),
             "three_score": round(three_score, 4), "three_dominant_fraction": round(three_dom, 4),
             "isolation": round(locus.isolation, 4),
-            **annotation, "structural": struct,
+            **annotation, "structural": struct, "exact_fraction": round(exact_fraction, 4),
             "expression_pass": int(expr_pass), "ends_pass": int(ends_pass),
-            "structural_pass": int(struct_pass),
-            "pass": int(candidate and expr_pass and ends_pass and struct_pass),
+            "structural_pass": int(struct_pass), "exact_pass": int(exact_pass),
+            "pass": int(candidate and expr_pass and ends_pass and struct_pass and exact_pass),
         }
         for s, c, r, rg in zip(samples, per_sample, rpm, rpm_genome):
             row[f"count_{s}"] = round(c, 3)
@@ -347,8 +357,8 @@ LOCUS_COLUMNS = [
     "locus_type", "rep_id", "rep_sequence", "rep_length", "rep_start", "rep_end", "unique_reads",
     "total_count", "background_count", "samples_passing_rpm", "five_score", "five_dominant_fraction",
     "five_jitter_fraction", "three_score", "three_dominant_fraction", "isolation", "annotation_class", "annotation_types",
-    "annotation_names", "annotation_orientation", "structural", "expression_pass", "ends_pass",
-    "structural_pass", "pass",
+    "annotation_names", "annotation_orientation", "structural", "exact_fraction",
+    "expression_pass", "ends_pass", "structural_pass", "exact_pass", "pass",
 ]
 READ_COLUMNS = ["locus_id", "read_id", "sequence", "start", "end", "weight", "count"]
 

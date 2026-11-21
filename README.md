@@ -174,6 +174,7 @@ Other settings, with their defaults:
 | `loci.min_rpm_genome` | 0 (off) | also reads per million reads assigned to the locus' genome in that sample: the threshold then follows the load of a symbiont (with library RPM alone a symbiont holding 20% of the reads passes thousands of loci) |
 | `loci.min_samples` | n − 1 | samples that must reach the thresholds |
 | `loci.exclude_structural` | `none` | drop loci overlapping a structural RNA (tRNA, rRNA, tmRNA, RNase P, SRP, 6S, snoRNA...; needs the annotation): `none`, `sense` (fragments of the RNA itself) or `any` (both strands). Advised `sense` for bacterial symbionts (see Benchmarks on real data) |
+| `loci.min_exact_fraction` | 0 (off) | share of the locus reads aligned without mismatches; reads of an organism missing from the reference fall on conserved sequence with mismatches (spider mite benchmark: false positives 0%, known small RNAs 85-97%). Keep off when the reference is another strain (real loci on SNPs have 0%) |
 | `ends.five_filter` | `dominant` | how the 5' end is tested: `dominant`, `jitter` or `score` (below) |
 | `ends.min_five_fraction` | 0.5 | `dominant` / `jitter`: a locus passes if this share of its reads starts at (near) the top 5' position |
 | `ends.five_jitter` | 1 | `jitter`: bases on each side of the top 5' position that still count |
@@ -227,7 +228,8 @@ Main columns of `loci.tsv`:
 | `isolation` | share of the reads starting near the peak that belong to the locus |
 | `annotation_class`, `annotation_orientation` | most specific overlapping GFF3 feature and its strand relation |
 | `structural` | `sense` / `antisense` when the locus overlaps a structural RNA (by GFF type, or by gene name / product for ncRNA, exon and gene features), empty otherwise |
-| `expression_pass`, `ends_pass`, `structural_pass`, `pass` | filter results |
+| `exact_fraction` | share of the reads aligned without mismatches |
+| `expression_pass`, `ends_pass`, `structural_pass`, `exact_pass`, `pass` | filter results |
 
 ### Plots and QC report
 

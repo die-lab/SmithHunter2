@@ -32,6 +32,7 @@ PARAMS = [
     ("--satellite-distance", "loci", "satellite_distance", 10),
     ("--satellite-fraction", "loci", "satellite_fraction", 0.1),
     ("--exclude-structural", "loci", "exclude_structural", "none"),
+    ("--min-exact-fraction", "loci", "min_exact_fraction", 0),
     ("--n-thre", "ends", "n_thre", 0.5), ("--penalty", "ends", "penalty", 0.1),
     ("--min-five", "ends", "min_five_score", 0.5), ("--min-three", "ends", "min_three_score", 0.0),
     ("--min-isolation", "ends", "min_isolation", 0.5),

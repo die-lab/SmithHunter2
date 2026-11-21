@@ -36,6 +36,7 @@ rule discover:
         min_five_fraction=ENDS.get("min_five_fraction", 0.5),
         five_jitter=ENDS.get("five_jitter", 1),
         exclude_structural=LOCI.get("exclude_structural", "none"),
+        min_exact_fraction=LOCI.get("min_exact_fraction", 0),
     log:
         OUT / "logs/discover.log",
     conda:
@@ -53,5 +54,6 @@ rule discover:
         "--min-three {params.min_three} --min-isolation {params.min_isolation} "
         "--five-filter {params.five_filter} --min-five-fraction {params.min_five_fraction} "
         "--five-jitter {params.five_jitter} --exclude-structural {params.exclude_structural} "
+        "--min-exact-fraction {params.min_exact_fraction} "
         "--loci {output.loci} --reads {output.reads} "
         "--fasta {output.fasta} > {log} 2>&1"

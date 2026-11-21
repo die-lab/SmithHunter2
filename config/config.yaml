@@ -77,6 +77,10 @@ loci:
   # `structural`). For a bacterial symbiont `sense` is advised (wAlbB benchmark: 25% of the
   # candidates, 58% of their reads were sense fragments of tRNA / rRNA / 6S RNA).
   exclude_structural: none
+  # Share of the locus reads aligned without mismatches (0 = off). Reads of an organism missing
+  # from the reference fall on conserved sequence with mismatches (spider mite benchmark: false
+  # positives 0%, known small RNAs 85-97%). Keep off when the reference is another strain.
+  min_exact_fraction: 0
 
 ends:
   n_thre: 0.5            # fraction of reads used to find the dominant end positions
