@@ -1,0 +1,13 @@
+name	contig	start	end	strand	source
+WsnRNA-7542	NZ_CP099592.1	489055	489072	-	iScience 2026 Table S1 (mature UAAUCUGACCGAUAGCUU, mel02-like); unique, most abundant
+WsnRNA-6108	NZ_CP099592.1	131088	131106	-	Table S1; sRNA-46 family; same hairpin as 3640 and 4274 (palindromic stem, + copy 131147-131165)
+WsnRNA-3640	NZ_CP099592.1	131084	131105	-	Table S1; offset isoform of 6108
+WsnRNA-4274	NZ_CP099592.1	131088	131105	-	Table S1; isoform of 6108
+WsnRNA-5629	NZ_CP099592.1	57210	57228	-	miRDeep2 hairpin; 4 exact genome copies (multimapping)
+WsnRNA-1028	NZ_CP099592.1	487627	487644	+	miRDeep2 hairpin; 5 exact copies (multimapping)
+WsnRNA-157	NZ_CP099592.1	57211	57228	+	reverse complement of 1028 (other strand of the palindrome); 5 copies
+WsnRNA-4650	NZ_CP099592.1	68716	68733	-	Table S1; unique
+WsnRNA-89	NZ_CP099592.1	20589	20612	+	Table S1; unique; antisense to NFI84_RS00090
+WsnRNA-744	NZ_CP099592.1	248655	248679	+	Table S1; unique; antisense to NFI84_RS01360; new family
+WsnRNA-7467	NZ_CP099592.1	1435040	1435058	-	miRDeep2 hairpin; repeat-derived (mature matches 129 sites)
+WsnRNA-8509	NZ_CP099592.1	881643	881661	-	Table S1; 13 exact copies (multimapping)

@@ -119,6 +119,16 @@ def test_no_annotation_means_not_structural(tmp_path):
     assert {r["annotation_class"] for r in rows} == {"NA"}
 
 
+def test_min_rpm_genome(tmp_path):
+    # genome totals: s1 = 160 reads, s2 = 170; locus 1 has 100 + 100, locus 2 has 60 + 70
+    args = inputs(tmp_path)
+    _, rows, _ = discover(*args, min_rpm=5, min_samples=2, min_rpm_genome=0)
+    assert [r["expression_pass"] for r in rows] == [1, 1]
+    _, rows, _ = discover(*args, min_rpm=5, min_samples=2, min_rpm_genome=500_000)
+    assert [r["expression_pass"] for r in rows] == [1, 0]
+    assert rows[0]["rpm_genome_s1"] == 625000.0
+
+
 def test_exclude_structural_rejects_unknown_mode(tmp_path):
     with pytest.raises(ValueError):
         discover(*inputs(tmp_path), exclude_structural="tRNA")

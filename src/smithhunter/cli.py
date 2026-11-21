@@ -86,7 +86,8 @@ def cmd_discover(args):
         background_flank=args.background_flank, satellite_distance=args.satellite_distance,
         satellite_fraction=args.satellite_fraction, min_isolation=args.min_isolation,
         five_filter=args.five_filter, min_five_fraction=args.min_five_fraction,
-        five_jitter=args.five_jitter, exclude_structural=args.exclude_structural)
+        five_jitter=args.five_jitter, exclude_structural=args.exclude_structural,
+        min_rpm_genome=args.min_rpm_genome)
     write_tsv(args.loci, rows, locus_columns(samples))
     write_tsv(args.reads, reads, READ_COLUMNS)
     write_fasta(args.fasta, rows)
@@ -358,6 +359,9 @@ def main(argv=None):
     s.add_argument("--contigs", required=True)
     s.add_argument("--merge-gap", type=int, default=0)
     s.add_argument("--min-rpm", type=float, default=5.0)
+    s.add_argument("--min-rpm-genome", type=float, default=0.0,
+                   help="also per million reads assigned to the locus' genome in the sample "
+                        "(0 = off); follows the load of a symbiont")
     s.add_argument("--min-count", type=float, default=1)
     s.add_argument("--min-samples", type=int, default=None)
     s.add_argument("--no-peaks", action="store_true",

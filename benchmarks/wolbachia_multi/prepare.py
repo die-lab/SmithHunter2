@@ -34,7 +34,11 @@ DMEL = {"url": "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/215/"
 AAEG = {"url": "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/002/204/515/GCF_002204515.2_AaegL5.0/"
                "GCF_002204515.2_AaegL5.0_genomic.fna.gz",
         "mito": "NC_035159.1"}
+TTRU = {"url": "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/028/476/895/GCA_028476895.1_ASM2847689v1/"
+               "GCA_028476895.1_ASM2847689v1_genomic.fna.gz",   # 3 chromosomes, no mitochondrion
+        "mito": "NC_024874.1", "mito_separate": True}
 WMEL = {"accession": "NC_002978.6"}   # also the closest complete reference for wMelPop
+WTTRU = {"accession": "NZ_CP099592.1"}   # GCF_024205405.1, one circular chromosome
 
 # group -> (field, regex) on the ENA run table; every other run is ignored
 STUDIES = {
@@ -54,6 +58,15 @@ STUDIES = {
         "accession": "PRJNA238976", "host": AAEG, "focus": WMEL,
         "groups": {"infected": ("sample_title", r"^Pop-"), "tet": ("sample_title", r"^Aag2-")},
         "adapter": "TGGAATTCTCGGGTGCCAAGG",
+    },
+    "mite": {   # Tetranychus truncatus adults (3 female + 3 male pools per line), wTtru;
+                # iScience 2026 doi:10.1016/j.isci.2025.114419 (12 WsnRNAs, positive_wTtru.tsv).
+                # The infected runs SRR3385484x are re-uploads of SRR3323042x (same biosamples,
+                # identical first reads): only the first set is used.
+        "accession": "PRJNA1253370", "host": TTRU, "focus": WTTRU,
+        "groups": {"infected": ("run_accession", r"^SRR3323(0427|0428|0429|0430|0433|0434)$"),
+                   "tet": ("run_accession", r"^SRR3323(0423|0424|0425|0426|0431|0432)$")},
+        "adapter": "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA",   # NEBNext small RNA
     },
 }
 
@@ -109,7 +122,15 @@ def genomes(spec: dict, data: Path) -> None:
     host = data / "host.fna.gz"
     curl(spec["host"]["url"], host)
     mt, nuc = data / "host_mt.fasta", data / "host_nuc.fasta"
-    if not (mt.exists() and nuc.exists()):
+    if spec["host"].get("mito_separate"):   # assembly without mitochondrion: fetch it apart
+        fetch_checked(EUTILS.format(acc=spec["host"]["mito"], fmt="fasta"), mt, b">")
+        if not nuc.exists():
+            tmp = nuc.with_name(nuc.name + ".tmp")
+            with gzip.open(host, "rt") as fh, open(tmp, "w") as fn:
+                for line in fh:
+                    fn.write(line)
+            tmp.rename(nuc)
+    elif not (mt.exists() and nuc.exists()):
         print("split host into nuclear and mitochondrial")
         mito = ">" + spec["host"]["mito"]
         with gzip.open(host, "rt") as fh, open(mt, "w") as fm, open(nuc, "w") as fn:

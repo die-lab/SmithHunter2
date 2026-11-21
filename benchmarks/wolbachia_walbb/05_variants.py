@@ -26,6 +26,7 @@ REPO = HERE.parent.parent
 PARAMS = [
     ("--merge-gap", "loci", "merge_gap", 0), ("--min-rpm", "loci", "min_rpm", 5),
     ("--min-count", "loci", "min_count", 1), ("--min-samples", "loci", "min_samples", None),
+    ("--min-rpm-genome", "loci", "min_rpm_genome", 0),
     ("--peak-window", "loci", "peak_window", 2), ("--peak-pvalue", "loci", "peak_pvalue", 0.001),
     ("--background-flank", "loci", "background_flank", 50),
     ("--satellite-distance", "loci", "satellite_distance", 10),

@@ -171,7 +171,8 @@ Other settings, with their defaults:
 | `loci.satellite_distance` / `satellite_fraction` | 10 / 0.1 | a weaker peak this close, with less than this share of reads, joins the stronger one |
 | `loci.multimap` | `fractional` | `fractional` or `unique` within one genome |
 | `loci.min_rpm` / `min_count` | 5 / 5 | per-sample thresholds (reads per million and raw reads) |
-| `loci.min_samples` | n − 1 | samples that must reach both thresholds |
+| `loci.min_rpm_genome` | 0 (off) | also reads per million reads assigned to the locus' genome in that sample: the threshold then follows the load of a symbiont (with library RPM alone a symbiont holding 20% of the reads passes thousands of loci) |
+| `loci.min_samples` | n − 1 | samples that must reach the thresholds |
 | `loci.exclude_structural` | `none` | drop loci overlapping a structural RNA (tRNA, rRNA, tmRNA, RNase P, SRP, 6S, snoRNA...; needs the annotation): `none`, `sense` (fragments of the RNA itself) or `any` (both strands). Advised `sense` for bacterial symbionts (see Benchmarks on real data) |
 | `ends.five_filter` | `dominant` | how the 5' end is tested: `dominant`, `jitter` or `score` (below) |
 | `ends.min_five_fraction` | 0.5 | `dominant` / `jitter`: a locus passes if this share of its reads starts at (near) the top 5' position |

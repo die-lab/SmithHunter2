@@ -203,7 +203,7 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
              min_five=0.5, min_three=0.0, peaks=True, peak_window=2, peak_pvalue=0.001,
              background_flank=50, satellite_distance=10, satellite_fraction=0.1,
              min_isolation=0.5, five_filter="dominant", min_five_fraction=0.5, five_jitter=1,
-             exclude_structural="none"):
+             exclude_structural="none", min_rpm_genome=0.0):
     if five_filter not in FIVE_FILTERS:
         raise ValueError(f"five_filter must be one of {FIVE_FILTERS}")
     if exclude_structural not in STRUCTURAL_FILTERS:
@@ -279,12 +279,16 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
         three_score, three_dom = end_score(three, n_thre, penalty)
         five_jit = jitter_fraction(five, five_jitter)
         # A sample counts when the locus is expressed above the local background in it.
+        # min_rpm_genome: the same per million reads of this genome in the sample, so that the
+        # threshold follows the load of a symbiont (library RPM alone gets lenient when the
+        # focus genome holds a large share of the library).
         background = locus.background or [0.0] * len(samples)
         n_pass = 0
-        for c, b, s in zip(per_sample, background, samples):
+        for c, b, s, t in zip(per_sample, background, samples, totals):
             net = c - b
             net_rpm = net / library[s] * 1e6 if library.get(s) else 0.0
-            if net >= min_count and net_rpm >= min_rpm and (
+            net_rpm_genome = net / t * 1e6 if t else 0.0
+            if net >= min_count and net_rpm >= min_rpm and net_rpm_genome >= min_rpm_genome and (
                     b <= 0 or poisson_significant(c, b, peak_pvalue)):
                 n_pass += 1
 

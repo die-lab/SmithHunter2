@@ -18,6 +18,7 @@ rule discover:
     params:
         merge_gap=LOCI.get("merge_gap", 0),
         min_rpm=LOCI.get("min_rpm", 5),
+        min_rpm_genome=LOCI.get("min_rpm_genome", 0),
         min_count=LOCI.get("min_count", 1),
         min_samples=min_samples_arg(),
         peaks="" if LOCI.get("peaks", True) else "--no-peaks",
@@ -43,6 +44,7 @@ rule discover:
         "{SH} discover --alignments {input.alignments} --counts {input.counts} "
         "--libraries {input.libraries} --genomes {input.genomes} --contigs {input.contigs} "
         "--merge-gap {params.merge_gap} --min-rpm {params.min_rpm} --min-count {params.min_count} "
+        "--min-rpm-genome {params.min_rpm_genome} "
         "{params.min_samples} {params.peaks} --peak-window {params.peak_window} "
         "--peak-pvalue {params.peak_pvalue} --background-flank {params.background_flank} "
         "--satellite-distance {params.satellite_distance} "
