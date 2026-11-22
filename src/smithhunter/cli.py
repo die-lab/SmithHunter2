@@ -97,7 +97,8 @@ def cmd_discover(args):
         five_filter=args.five_filter, min_five_fraction=args.min_five_fraction,
         five_jitter=args.five_jitter, exclude_structural=args.exclude_structural,
         min_rpm_genome=args.min_rpm_genome, min_exact_fraction=args.min_exact_fraction,
-        groups=read_groups(args.samples_table), min_samples_scope=args.min_samples_scope)
+        groups=read_groups(args.samples_table), min_samples_scope=args.min_samples_scope,
+        cluster_gap=args.cluster_gap)
     write_tsv(args.loci, rows, locus_columns(samples))
     write_tsv(args.reads, reads, READ_COLUMNS)
     write_fasta(args.fasta, rows)
@@ -316,7 +317,7 @@ def cmd_validate_targets(args):
               f"in the top 5%: {d['top5']:.1%}, top 10%: {d['top10']:.1%}")
 
 
-def main(argv=None):
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="smithhunter", description=__doc__)
     p.add_argument("--version", action="version", version=__version__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -386,6 +387,9 @@ def main(argv=None):
     s.add_argument("--background-flank", type=int, default=50)
     s.add_argument("--satellite-distance", type=int, default=10)
     s.add_argument("--satellite-fraction", type=float, default=0.1)
+    s.add_argument("--cluster-gap", type=int, default=0,
+                   help="peak loci overlapping or at most this far apart share a cluster_id "
+                        "(report only, the filters ignore it)")
     s.add_argument("--n-thre", type=float, default=0.5)
     s.add_argument("--penalty", type=float, default=0.1)
     s.add_argument("--min-five", type=float, default=0.5, help="five-filter score: score > this")
@@ -597,8 +601,11 @@ def main(argv=None):
     s.add_argument("--contigs", required=True)
     s.add_argument("--out", required=True)
     s.set_defaults(func=cmd_coverage)
+    return p
 
-    args = p.parse_args(argv)
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
     args.func(args)
 
 

@@ -187,6 +187,30 @@ def fold_origin(locus: Locus, length: int, circular: bool) -> Locus:
     return locus
 
 
+def peak_clusters(loci: list[Locus], gap: int = 0) -> list[int | None]:
+    """Cluster index per locus: peak loci of one contig and strand whose spans overlap, or lie
+    at most ``gap`` bases apart, share a cluster (background loci: None).
+
+    Reported only (``cluster_id``, ``cluster_size``, ``cluster_count``), never used by the
+    filters: ragged 5' isoforms of one small RNA (WsnRNA-46 in Aag2 cells) are split into
+    several weaker peaks, and merging them would also join distinct small RNAs. Loci crossing
+    the origin of a circular contig are not chained with the loci at its start.
+    """
+    out: list[int | None] = [None] * len(loci)
+    order = sorted((i for i, l in enumerate(loci) if l.kind == "peak"),
+                   key=lambda i: (loci[i].genome, loci[i].contig, loci[i].strand, loci[i].start))
+    n, key, end = -1, None, None
+    for i in order:
+        l = loci[i]
+        k = (l.genome, l.contig, l.strand)
+        if k != key or l.start > end + gap:
+            n, key, end = n + 1, k, l.end
+        else:
+            end = max(end, l.end)
+        out[i] = n
+    return out
+
+
 def load_counts(path: str):
     counts: dict[str, tuple[str, list[float]]] = {}
     with open_text(path) as fh:
@@ -204,10 +228,11 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
              background_flank=50, satellite_distance=10, satellite_fraction=0.1,
              min_isolation=0.5, five_filter="dominant", min_five_fraction=0.5, five_jitter=1,
              exclude_structural="none", min_rpm_genome=0.0, min_exact_fraction=0.0,
-             groups=None, min_samples_scope="all"):
+             groups=None, min_samples_scope="all", cluster_gap=0):
     """groups: sample -> group (e.g. sex, tissue). With min_samples_scope "group" a locus passes
     the expression filter when it passes in min_samples samples of at least one group (default
-    group size - 1, at least 1), so a small RNA of one condition is not rejected by the others."""
+    group size - 1, at least 1), so a small RNA of one condition is not rejected by the others.
+    cluster_gap: see peak_clusters (report only)."""
     if five_filter not in FIVE_FILTERS:
         raise ValueError(f"five_filter must be one of {FIVE_FILTERS}")
     if exclude_structural not in STRUCTURAL_FILTERS:
@@ -267,6 +292,7 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
                                      satellite_distance, satellite_fraction):
                 loci.append(fold_origin(locus, length, circular))
     loci.sort(key=lambda l: (l.genome, l.contig, l.start, l.strand))
+    clusters = peak_clusters(loci, cluster_gap)
 
     rows, reads = [], []
     serial: dict[str, int] = defaultdict(int)
@@ -373,6 +399,20 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
             row[f"rpm_{s}"] = round(r, 3)
             row[f"rpm_genome_{s}"] = round(rg, 3)
         rows.append(row)
+
+    # cluster_id: the most abundant peak locus of the cluster (ties: the first one)
+    members: dict[int, list[dict]] = defaultdict(list)
+    for row, c in zip(rows, clusters):
+        if c is not None:
+            members[c].append(row)
+    summary = {}
+    for c, group in members.items():
+        lead = max(enumerate(group), key=lambda ir: (ir[1]["total_count"], -ir[0]))[1]
+        summary[c] = (lead["locus_id"], len(group),
+                      round(sum(r["total_count"] for r in group), 3))
+    for row, c in zip(rows, clusters):
+        cid, size, count = summary[c] if c is not None else ("", 0, 0.0)
+        row.update(cluster_id=cid, cluster_size=size, cluster_count=count)
     return samples, rows, reads
 
 
@@ -383,6 +423,7 @@ LOCUS_COLUMNS = [
     "five_jitter_fraction", "three_score", "three_dominant_fraction", "isolation", "annotation_class", "annotation_types",
     "annotation_names", "annotation_orientation", "structural", "exact_fraction",
     "expression_pass", "ends_pass", "structural_pass", "exact_pass", "pass",
+    "cluster_id", "cluster_size", "cluster_count",
 ]
 READ_COLUMNS = ["locus_id", "read_id", "sequence", "start", "end", "weight", "count"]
 

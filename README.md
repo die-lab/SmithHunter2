@@ -169,6 +169,7 @@ Other settings, with their defaults:
 | `loci.peak_pvalue` | 0.001 | Poisson test of a peak against the local background |
 | `loci.background_flank` | 50 | bases on each side used to estimate the background |
 | `loci.satellite_distance` / `satellite_fraction` | 10 / 0.1 | a weaker peak this close, with less than this share of reads, joins the stronger one |
+| `loci.cluster_gap` | 0 | peak loci overlapping or at most this far apart share a `cluster_id` (report only, the filters ignore it) |
 | `loci.multimap` | `fractional` | `fractional` or `unique` within one genome |
 | `loci.min_rpm` / `min_count` | 5 / 5 | per-sample thresholds (reads per million and raw reads) |
 | `loci.min_rpm_genome` | 0 (off) | also reads per million reads assigned to the locus' genome in that sample: the threshold then follows the load of a symbiont (with library RPM alone a symbiont holding 20% of the reads passes thousands of loci) |
@@ -231,6 +232,7 @@ Main columns of `loci.tsv`:
 | `structural` | `sense` / `antisense` when the locus overlaps a structural RNA (by GFF type, or by gene name / product for ncRNA, exon and gene features), empty otherwise |
 | `exact_fraction` | share of the reads aligned without mismatches |
 | `expression_pass`, `ends_pass`, `structural_pass`, `exact_pass`, `pass` | filter results |
+| `cluster_id`, `cluster_size`, `cluster_count` | peak loci of one strand that overlap (or lie within `loci.cluster_gap` bases) share a cluster, named after its most abundant locus; size and reads of the cluster. Report only: ragged 5' isoforms of one small RNA show up as several loci of one cluster. Empty for background loci |
 
 ### Plots and QC report
 

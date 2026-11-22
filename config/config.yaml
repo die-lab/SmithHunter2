@@ -66,6 +66,7 @@ loci:
   background_flank: 50   # bases on each side used to estimate the background
   satellite_distance: 10 # a weak peak this close to a stronger one ...
   satellite_fraction: 0.1  # ... with less than this share of its reads joins it
+  cluster_gap: 0         # peak loci overlapping or this close share a cluster_id (report only)
   multimap: fractional   # fractional | unique (within one genome)
   min_rpm: 5             # reads per million (library total) in one sample
   min_count: 5           # and at least this many reads in that sample

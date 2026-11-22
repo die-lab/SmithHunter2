@@ -1,0 +1,21 @@
+ends:
+  five_filter: dominant
+  five_jitter: 1
+  min_five_fraction: 0.5
+  min_five_score: 0.5
+  min_isolation: 0.5
+  min_three_score: 0.0
+  n_thre: 0.5
+  penalty: 0.1
+loci:
+  background_flank: 50
+  exclude_structural: none
+  merge_gap: 0
+  min_count: 5
+  min_rpm: 5
+  min_samples: null
+  peak_pvalue: 0.001
+  peak_window: 2
+  peaks: true
+  satellite_distance: 10
+  satellite_fraction: 0.1

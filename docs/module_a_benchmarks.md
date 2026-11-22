@@ -134,3 +134,21 @@ Advice: with mixed conditions use `group` rather than lowering `min_samples` by 
   would rescue it at the defaults only, while merging neighbouring peaks risks joining
   distinct small RNAs everywhere else. One control at very low load is not enough evidence.
 - No v0 comparison was run (about a day per line; only with the maintainer's permission).
+
+## 7. Tooling after the review (2026-11-22)
+
+- **One list of discover settings** (`src/smithhunter/settings.py`): `discovery.smk`,
+  `05_variants.py` and the regression tests build the `discover` arguments from it; tests check
+  it against the command line parser and `config/config.yaml`.
+- **Real Snakemake run** of `discover` with `symbiont_precise` + `min_samples_scope: group` on
+  the spider mite infected line (upstream results linked, only `discover` planned and run):
+  24,470 loci, every column identical to the `05_variants.py` result of the same settings,
+  37 passing Wolbachia loci in both.
+- **Regression fixtures** (`tests/data/{jw18,mite}_{infected,tet}`, ~400 kB, made by
+  `benchmarks/wolbachia_multi/make_fixture.py`): reads within 400 nt of WsnRNA-46/59, the JW18
+  cross-talk loci, WsnRNA-7542/744 and the two mite false positives; reads left out are summed
+  into one filler read so `rpm_genome` stays exact. Checked against the full runs (59 / 10 / 21 /
+  3 loci identical). `tests/test_benchmark_regression.py` asserts the results of sections 2-5.
+- **Clusters** (`cluster_id`, `cluster_size`, `cluster_count`; report only): Aag2 at the
+  defaults has 570 passing loci in 513 clusters (57 are further 5' isoforms of a passing locus);
+  WsnRNA-46 shows as one cluster of 6 peaks, 157 reads, none passing.

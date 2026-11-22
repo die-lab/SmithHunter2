@@ -21,28 +21,9 @@ import yaml
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-
-# discover flag <- (config section, key, default): mirrors workflow/rules/discovery.smk
-PARAMS = [
-    ("--merge-gap", "loci", "merge_gap", 0), ("--min-rpm", "loci", "min_rpm", 5),
-    ("--min-count", "loci", "min_count", 1), ("--min-samples", "loci", "min_samples", None),
-    ("--min-rpm-genome", "loci", "min_rpm_genome", 0),
-    ("--peak-window", "loci", "peak_window", 2), ("--peak-pvalue", "loci", "peak_pvalue", 0.001),
-    ("--background-flank", "loci", "background_flank", 50),
-    ("--satellite-distance", "loci", "satellite_distance", 10),
-    ("--satellite-fraction", "loci", "satellite_fraction", 0.1),
-    ("--exclude-structural", "loci", "exclude_structural", "none"),
-    ("--min-exact-fraction", "loci", "min_exact_fraction", 0),
-    ("--n-thre", "ends", "n_thre", 0.5), ("--penalty", "ends", "penalty", 0.1),
-    ("--min-five", "ends", "min_five_score", 0.5), ("--min-three", "ends", "min_three_score", 0.0),
-    ("--min-isolation", "ends", "min_isolation", 0.5),
-    ("--five-filter", "ends", "five_filter", "dominant"),
-    ("--min-five-fraction", "ends", "min_five_fraction", 0.5),
-    ("--five-jitter", "ends", "five_jitter", 1),
-]
-
-
-KNOWN = {(section, key) for _, section, key, _ in PARAMS} | {("loci", "peaks"), ("loci", "min_samples_scope")}
+sys.path.insert(0, str(REPO / "src"))
+# the same list of settings as workflow/rules/discovery.smk
+from smithhunter.settings import KNOWN, discover_args, effective  # noqa: E402
 
 
 def parse_set(items: list[str]) -> dict[tuple[str, str], object]:
@@ -60,8 +41,12 @@ def parse_set(items: list[str]) -> dict[tuple[str, str], object]:
     return out
 
 
-def setting(cfg: dict, overrides: dict, section: str, key: str, default):
-    return overrides.get((section, key), (cfg.get(section) or {}).get(key, default))
+def with_overrides(cfg: dict, overrides: dict) -> dict:
+    out = {k: dict(v) if isinstance(v, dict) else v for k, v in cfg.items()}
+    for (section, key), value in overrides.items():
+        out.setdefault(section, {})
+        out[section] = dict(out[section] or {}, **{key: value})
+    return out
 
 
 def link(src: Path, dst: Path) -> None:
@@ -85,22 +70,9 @@ def run_line(line_dir: Path, out: Path, overrides: dict):
            "--libraries", str(res / "collapsed/libraries.tsv"),
            "--genomes", str(res / "reference/genomes.tsv"),
            "--contigs", str(res / "reference/contigs.tsv")]
-    used = {}
-    for flag, section, key, default in PARAMS:
-        value = setting(cfg, overrides, section, key, default)
-        if value is None:
-            continue
-        cmd += [flag, str(value)]
-        used[f"{section}.{key}"] = value
-    scope = setting(cfg, overrides, "loci", "min_samples_scope", "all")
-    used["loci.min_samples_scope"] = scope
-    if scope == "group":
-        cmd += ["--min-samples-scope", "group", "--samples-table",
-                str(line_dir / cfg.get("samples", "config/samples.tsv"))]
-    peaks = setting(cfg, overrides, "loci", "peaks", True)
-    used["loci.peaks"] = peaks
-    if not peaks:
-        cmd.append("--no-peaks")
+    merged = with_overrides(cfg, overrides)
+    used = {k: v for k, v in effective(merged).items() if v is not None}
+    cmd += discover_args(merged, str(line_dir / cfg.get("samples", "config/samples.tsv")))
     cmd += ["--loci", str(out / "discovery/loci.tsv"),
             "--reads", str(out / "discovery/locus_reads.tsv.gz"),
             "--fasta", str(out / "discovery/candidates.fasta")]
