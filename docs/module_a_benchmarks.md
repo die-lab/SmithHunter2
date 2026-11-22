@@ -126,6 +126,11 @@ Advice: with mixed conditions use `group` rather than lowering `min_samples` by 
 - Sensitivity at low load is limited by the library threshold; the 6108 family and WsnRNA-89 of
   the mite need `min_rpm` 1 (with group scope: 238 candidates, no false positive here, but in JW18
   `min_rpm` 1 lets cross-talk of the top symbiont small RNAs pass in the cured line).
-- WsnRNA-46 in Aag2 (~170 reads split in 5' isoforms of the hairpin arm) fails isolation: a
-  precursor-aware grouping of arm isoforms would help hairpin-derived small RNAs.
+- WsnRNA-46 in Aag2: checked, grouping of 5' isoforms **not implemented**. The precursor
+  (1204493-1204642 +) carries five peak loci with 5' ends at 1204507, 511, 521, 525 and 532
+  (21, 52, 50, 6 and 9 reads; ragged 5' ends over 25 nt, not two hairpin arms). Merged they
+  would reach 7.2 / 6.9 RPM of the library (passes the default 5) but only 38 / 51 reads per
+  million Wolbachia reads, far below `min_rpm_genome` 100 of the advised profiles: grouping
+  would rescue it at the defaults only, while merging neighbouring peaks risks joining
+  distinct small RNAs everywhere else. One control at very low load is not enough evidence.
 - No v0 comparison was run (about a day per line; only with the maintainer's permission).
