@@ -28,6 +28,7 @@ clustering of SmithHunter v0, which could join reads from different positions.
 from __future__ import annotations
 
 import math
+import sys
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 
@@ -224,9 +225,12 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
         if missing:
             raise ValueError(f"min_samples_scope group: no group for samples {missing}")
         sample_group = [groups[s] for s in samples]
-        for g in set(sample_group):
+        for g in sorted(set(sample_group)):
             size = sample_group.count(g)
-            group_need[g] = min(size, min_samples) if min_samples else max(1, size - 1)
+            group_need[g] = min(size, min_samples) if min_samples is not None else max(1, size - 1)
+            if size < 2:
+                print(f"warning: group {g!r} has {size} sample: one sample is enough there "
+                      "(check the group column)", file=sys.stderr)
     if min_samples is None:
         min_samples = max(1, len(samples) - 1)
 
@@ -243,7 +247,7 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
             w = float(weight)
             grouped[(genome, contig, strand)].append(
                 Member(rid, int(start), int(end), w, w * sum(row), tuple(w * c for c in row),
-                       int(mm) if mm.isdigit() else 0))
+                       int(mm) if mm.isdigit() else 99))   # unknown: not counted as exact
             totals = genome_totals[genome]
             for i, c in enumerate(row):
                 totals[i] += w * c

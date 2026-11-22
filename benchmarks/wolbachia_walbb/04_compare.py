@@ -101,8 +101,11 @@ def section_loci(run: Run, label: str) -> str:
     both = len(run.passing())
     rows = [["loci in loci.tsv (all types)", len(loci)]]
     rows += [[f"  locus_type = {t}", n] for t, n in sorted(types.items())]
-    rows += [["peak loci passing expression", expr], ["peak loci passing ends + isolation", ends],
-             ["**pass = 1 (candidates.fasta)**", f"**{both}**"]]
+    rows += [["peak loci passing expression", expr], ["peak loci passing ends + isolation", ends]]
+    for col, label in (("structural_pass", "structural filter"), ("exact_pass", "exact-read filter")):
+        if peak and col in peak[0]:
+            rows.append([f"peak loci passing the {label}", sum(r[col] == "1" for r in peak)])
+    rows += [["**pass = 1 (candidates.fasta)**", f"**{both}**"]]
     return f"### Loci of `{run.genome}` ({label})\n\n" + table(["", "n"], rows) + "\n"
 
 
@@ -147,6 +150,8 @@ def section_sweep(run: Run, label: str, min_samples: int | None) -> str:
         rows.append(row)
     lib = sorted(run.library.get(s, 0) for s in run.samples)
     return (f"### Stricter expression filter ({label}; loci passing ends, in >= {need} of {n} libraries)\n\n"
+            f"Library RPM and counts only, over all samples (ignores `min_rpm_genome`, "
+            f"`min_samples_scope: group` and the structural / exact-read filters). "
             f"Approximate: gross counts, the local background is not subtracted, so the "
             f"(5 RPM, 5 reads) cell can be a little above the real pass count. Library sizes "
             f"{fmt(lib[0])}-{fmt(lib[-1])} reads: 5 RPM = {fmt(5e-6 * lib[0])}-{fmt(5e-6 * lib[-1])} reads.\n\n"
@@ -216,6 +221,8 @@ def why_failed(r: dict) -> str:
         reasons.append(f"ends (5' dominant {r['five_dominant_fraction']}, isolation {r['isolation']})")
     if r.get("structural_pass", "1") != "1":
         reasons.append(f"structural ({r['structural']})")
+    if r.get("exact_pass", "1") != "1":
+        reasons.append(f"exact reads ({r['exact_fraction']})")
     return "; ".join(reasons) or "?"
 
 

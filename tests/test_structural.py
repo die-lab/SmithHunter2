@@ -129,6 +129,35 @@ def test_min_rpm_genome(tmp_path):
     assert rows[0]["rpm_genome_s1"] == 625000.0
 
 
+def test_min_rpm_genome_uses_the_locus_genome(tmp_path):
+    # u1/u2 on genome bact (100 reads in s1), u3 + a large u4 on genome other (60 + 1000 in s1)
+    counts = write(tmp_path / "counts.tsv",
+                   "read_id\tsequence\tlength\ts1\ts2\n"
+                   "u1\tACGTACGTACGTACGTACGT\t20\t80\t90\n"
+                   "u2\tACGTACGTACGTACGTACG\t19\t20\t10\n"
+                   "u3\tGGGGGGGGGGGGGGGGGGGG\t20\t60\t70\n"
+                   "u4\tTTTTTTTTTTTTTTTTTTTT\t20\t1000\t1000\n")
+    libs = write(tmp_path / "libs.tsv", "sample\treads_in\treads_kept\ns1\t2000\t1200\ns2\t2000\t1200\n")
+    genomes = write(tmp_path / "genomes.tsv",
+                    "name\tfasta\trole\tcircular\tannotation\tmin_length\tmax_length\ttargets\n"
+                    "bact\tb.fa\tfocus\t0\t\t18\t35\tnone\nother\to.fa\tfocus\t0\t\t18\t35\tnone\n")
+    contigs = write(tmp_path / "contigs.tsv",
+                    "ref\tgenome\tcontig\tlength\tcircular\n"
+                    "bact|c1\tbact\tc1\t1000\t0\nother|o1\tother\to1\t5000\t0\n")
+    alignments = write(tmp_path / "aln.tsv",
+                       "read_id\tgenome\tcontig\tstart\tend\tstrand\tweight\tmismatches\n"
+                       "u1\tbact\tc1\t10\t30\t+\t1\t0\n"
+                       "u2\tbact\tc1\t10\t29\t+\t1\t0\n"
+                       "u3\tother\to1\t500\t520\t-\t1\t0\n"
+                       "u4\tother\to1\t3000\t3020\t+\t1\t0\n")
+    _, rows, _ = discover(alignments, counts, libs, genomes, contigs, min_rpm=5, min_samples=2,
+                          min_rpm_genome=100_000)
+    by_start = {(r["genome"], r["start"]): r for r in rows}
+    assert by_start[("bact", 11)]["expression_pass"] == 1      # 100 / 100 reads of bact
+    assert by_start[("other", 501)]["expression_pass"] == 0    # 60 / 1060 reads of other
+    assert by_start[("other", 3001)]["expression_pass"] == 1
+
+
 def test_exact_fraction(tmp_path):
     alignments, counts, libs, genomes, contigs = inputs(tmp_path)
     text = open(alignments).read().replace("u2\tbact\tc1\t10\t29\t+\t1\t0", "u2\tbact\tc1\t10\t29\t+\t1\t1")
