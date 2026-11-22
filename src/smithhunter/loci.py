@@ -202,15 +202,31 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
              min_five=0.5, min_three=0.0, peaks=True, peak_window=2, peak_pvalue=0.001,
              background_flank=50, satellite_distance=10, satellite_fraction=0.1,
              min_isolation=0.5, five_filter="dominant", min_five_fraction=0.5, five_jitter=1,
-             exclude_structural="none", min_rpm_genome=0.0, min_exact_fraction=0.0):
+             exclude_structural="none", min_rpm_genome=0.0, min_exact_fraction=0.0,
+             groups=None, min_samples_scope="all"):
+    """groups: sample -> group (e.g. sex, tissue). With min_samples_scope "group" a locus passes
+    the expression filter when it passes in min_samples samples of at least one group (default
+    group size - 1, at least 1), so a small RNA of one condition is not rejected by the others."""
     if five_filter not in FIVE_FILTERS:
         raise ValueError(f"five_filter must be one of {FIVE_FILTERS}")
     if exclude_structural not in STRUCTURAL_FILTERS:
         raise ValueError(f"exclude_structural must be one of {STRUCTURAL_FILTERS}")
+    if min_samples_scope not in ("all", "group"):
+        raise ValueError("min_samples_scope must be all or group")
     samples, counts = load_counts(counts_path)
     library = {r["sample"]: float(r["reads_kept"]) for r in read_tsv(libraries_path)}
     genomes = {g["name"]: g for g in read_tsv(genomes_path)}
     contigs = {(c["genome"], c["contig"]): c for c in read_tsv(contigs_path)}
+    group_need: dict[str, int] = {}
+    sample_group: list[str] = []
+    if min_samples_scope == "group":
+        missing = [s for s in samples if not (groups or {}).get(s)]
+        if missing:
+            raise ValueError(f"min_samples_scope group: no group for samples {missing}")
+        sample_group = [groups[s] for s in samples]
+        for g in set(sample_group):
+            size = sample_group.count(g)
+            group_need[g] = min(size, min_samples) if min_samples else max(1, size - 1)
     if min_samples is None:
         min_samples = max(1, len(samples) - 1)
 
@@ -286,14 +302,19 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
         # threshold follows the load of a symbiont (library RPM alone gets lenient when the
         # focus genome holds a large share of the library).
         background = locus.background or [0.0] * len(samples)
-        n_pass = 0
+        passed = []
         for c, b, s, t in zip(per_sample, background, samples, totals):
             net = c - b
             net_rpm = net / library[s] * 1e6 if library.get(s) else 0.0
             net_rpm_genome = net / t * 1e6 if t else 0.0
-            if net >= min_count and net_rpm >= min_rpm and net_rpm_genome >= min_rpm_genome and (
-                    b <= 0 or poisson_significant(c, b, peak_pvalue)):
-                n_pass += 1
+            passed.append(net >= min_count and net_rpm >= min_rpm and net_rpm_genome >= min_rpm_genome
+                          and (b <= 0 or poisson_significant(c, b, peak_pvalue)))
+        n_pass = sum(passed)
+        if group_need:
+            expr_pass = any(sum(p for p, gg in zip(passed, sample_group) if gg == g) >= need
+                            for g, need in group_need.items())
+        else:
+            expr_pass = n_pass >= min_samples
 
         ann = annotations.get(locus.genome)
         if ann:
@@ -316,7 +337,6 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
         exact_fraction = exact / total if total else 0.0
         exact_pass = exact_fraction >= min_exact_fraction - 1e-9
 
-        expr_pass = n_pass >= min_samples
         if five_filter == "dominant":
             five_pass = five_dom >= min_five_fraction - 1e-9
         elif five_filter == "jitter":

@@ -67,6 +67,7 @@ STUDIES = {
         "groups": {"infected": ("run_accession", r"^SRR3323(0427|0428|0429|0430|0433|0434)$"),
                    "tet": ("run_accession", r"^SRR3323(0423|0424|0425|0426|0431|0432)$")},
         "adapter": "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA",   # NEBNext small RNA
+        "sample_groups": ("sample_alias", {"male": r"M\d$", "female": r"F\d$"}),
     },
 }
 
@@ -201,13 +202,15 @@ def main() -> None:
         text = (template.replace("@GROUP@", group).replace("@THREADS@", str(args.threads))
                 .replace("@ADAPTER@", spec["adapter"]))
         (d / "config/config.yaml").write_text(text)
+        field, patterns = spec.get("sample_groups", ("", {}))
         with open(d / "config/samples.tsv", "w") as fh:
-            fh.write("sample\tfq1\tfq2\n")
+            fh.write("sample\tfq1\tfq2\tgroup\n")   # group: for loci.min_samples_scope group
             for r in sorted(rs, key=lambda r: r["run_accession"]):
                 alias = r["sample_alias"]
                 name = (f"{alias}_{r['run_accession']}" if re.fullmatch(r"[A-Za-z0-9_.-]{1,20}", alias)
                         else r["run_accession"])
-                fh.write(f"{name}\t{bench / 'fastq' / (r['run_accession'] + '.fastq.gz')}\t\n")
+                grp = next((g for g, rx in patterns.items() if re.search(rx, r.get(field, ""))), "")
+                fh.write(f"{name}\t{bench / 'fastq' / (r['run_accession'] + '.fastq.gz')}\t\t{grp}\n")
         print(f"wrote {d}/config")
     print("next: BENCH=<bench> GENOME_FASTA=data/focus.fasta CORES=8 bash ../wolbachia_walbb/03_run.sh")
 

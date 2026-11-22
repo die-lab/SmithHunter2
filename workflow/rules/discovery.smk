@@ -1,6 +1,15 @@
 def min_samples_arg():
     value = LOCI.get("min_samples")
-    return "" if value is None else f"--min-samples {int(value)}"
+    out = "" if value is None else f"--min-samples {int(value)}"
+    scope = LOCI.get("min_samples_scope", "all")
+    if scope not in ("all", "group"):
+        raise ValueError("config: loci.min_samples_scope must be all or group")
+    if scope == "group":
+        if not SAMPLE_GROUPS or not all(SAMPLE_GROUPS.values()):
+            raise ValueError("config: loci.min_samples_scope group needs a `group` value for "
+                             "every sample in the samples table")
+        out += f" --min-samples-scope group --samples-table {config['samples']}"
+    return out
 
 
 rule discover:

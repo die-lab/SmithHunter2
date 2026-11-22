@@ -42,7 +42,7 @@ PARAMS = [
 ]
 
 
-KNOWN = {(section, key) for _, section, key, _ in PARAMS} | {("loci", "peaks")}
+KNOWN = {(section, key) for _, section, key, _ in PARAMS} | {("loci", "peaks"), ("loci", "min_samples_scope")}
 
 
 def parse_set(items: list[str]) -> dict[tuple[str, str], object]:
@@ -92,6 +92,11 @@ def run_line(line_dir: Path, out: Path, overrides: dict):
             continue
         cmd += [flag, str(value)]
         used[f"{section}.{key}"] = value
+    scope = setting(cfg, overrides, "loci", "min_samples_scope", "all")
+    used["loci.min_samples_scope"] = scope
+    if scope == "group":
+        cmd += ["--min-samples-scope", "group", "--samples-table",
+                str(line_dir / cfg.get("samples", "config/samples.tsv"))]
     peaks = setting(cfg, overrides, "loci", "peaks", True)
     used["loci.peaks"] = peaks
     if not peaks:

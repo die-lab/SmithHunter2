@@ -39,13 +39,15 @@ def load_samples(path):
             raise ValueError(f"{path}: duplicated sample {name!r}")
         if not r.get("fq1"):
             raise ValueError(f"{path}: sample {name!r} has no fq1")
-        samples[name] = {"fq1": r["fq1"].strip(), "fq2": (r.get("fq2") or "").strip()}
+        samples[name] = {"fq1": r["fq1"].strip(), "fq2": (r.get("fq2") or "").strip(),
+                         "group": (r.get("group") or "").strip()}
     if not samples:
         raise ValueError(f"{path}: no samples")
     return samples
 
 
 SAMPLES = load_samples(config["samples"])
+SAMPLE_GROUPS = {name: s["group"] for name, s in SAMPLES.items()}
 
 
 def fastq_inputs(wildcards):

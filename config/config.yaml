@@ -71,6 +71,7 @@ loci:
   min_count: 5           # and at least this many reads in that sample
   min_rpm_genome: 0      # and per million reads of the locus' genome in that sample (0 = off)
   min_samples: null      # samples that must reach min_rpm; null -> number of samples - 1
+  min_samples_scope: all # all | group: min_samples within one group (samples.tsv column `group`)
   # Loci overlapping structural RNAs (tRNA, rRNA, tmRNA, RNase P, SRP, 6S, snoRNA...; needs the
   # genome annotation): none = keep (tRNA fragments can be real small RNAs), sense = drop the
   # fragments of the RNA itself, any = drop both strands. Always reported in loci.tsv (column

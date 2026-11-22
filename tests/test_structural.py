@@ -153,6 +153,34 @@ def test_circular_wrap_keeps_mismatches(tmp_path):
     assert shifted.members[0].mismatches == 1 and shifted.start == 5
 
 
+def test_min_samples_scope_group(tmp_path):
+    alignments, counts, libs, genomes, contigs = inputs(tmp_path)
+    text = open(counts).read().replace("u3\tGGGGGGGGGGGGGGGGGGGG\t20\t60\t70",
+                                       "u3\tGGGGGGGGGGGGGGGGGGGG\t20\t60\t0")   # only in s1
+    open(counts, "w").write(text)
+    args = (alignments, counts, libs, genomes, contigs)
+    _, rows, _ = discover(*args, min_rpm=5)                       # n - 1 = 1 of 2
+    assert [r["expression_pass"] for r in rows] == [1, 1]
+    _, rows, _ = discover(*args, min_rpm=5, min_samples=2)
+    assert [r["expression_pass"] for r in rows] == [1, 0]
+    groups = {"s1": "male", "s2": "female"}
+    _, rows, _ = discover(*args, min_rpm=5, min_samples=2, groups=groups, min_samples_scope="group")
+    assert [r["expression_pass"] for r in rows] == [1, 1]          # min(2, group size 1) in males
+    assert rows[1]["samples_passing_rpm"] == 1
+    with pytest.raises(ValueError):
+        discover(*args, groups={"s1": "male"}, min_samples_scope="group")
+    with pytest.raises(ValueError):
+        discover(*args, min_samples_scope="sex")
+
+
+def test_read_groups(tmp_path):
+    from smithhunter.cli import read_groups
+    p = tmp_path / "samples.tsv"
+    p.write_text("sample\tfq1\tfq2\tgroup\nW1M1\ta.fq\t\tmale\nW1F1\tb.fq\t\tfemale\n")
+    assert read_groups(str(p)) == {"W1M1": "male", "W1F1": "female"}
+    assert read_groups(None) is None
+
+
 def test_exclude_structural_rejects_unknown_mode(tmp_path):
     with pytest.raises(ValueError):
         discover(*inputs(tmp_path), exclude_structural="tRNA")

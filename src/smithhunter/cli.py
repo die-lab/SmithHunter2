@@ -76,6 +76,15 @@ def cmd_assign(args):
               ["class", "genomes", "length", *samples])
 
 
+def read_groups(path):
+    """sample -> group from a samples table with an optional `group` column."""
+    if not path:
+        return None
+    from .seqio import read_tsv
+    return {r["sample"].strip(): (r.get("group") or "").strip() for r in read_tsv(path)
+            if r.get("sample")}
+
+
 def cmd_discover(args):
     samples, rows, reads = discover(
         args.alignments, args.counts, args.libraries, args.genomes, args.contigs,
@@ -87,7 +96,8 @@ def cmd_discover(args):
         satellite_fraction=args.satellite_fraction, min_isolation=args.min_isolation,
         five_filter=args.five_filter, min_five_fraction=args.min_five_fraction,
         five_jitter=args.five_jitter, exclude_structural=args.exclude_structural,
-        min_rpm_genome=args.min_rpm_genome, min_exact_fraction=args.min_exact_fraction)
+        min_rpm_genome=args.min_rpm_genome, min_exact_fraction=args.min_exact_fraction,
+        groups=read_groups(args.samples_table), min_samples_scope=args.min_samples_scope)
     write_tsv(args.loci, rows, locus_columns(samples))
     write_tsv(args.reads, reads, READ_COLUMNS)
     write_fasta(args.fasta, rows)
@@ -364,6 +374,11 @@ def main(argv=None):
                         "(0 = off); follows the load of a symbiont")
     s.add_argument("--min-count", type=float, default=1)
     s.add_argument("--min-samples", type=int, default=None)
+    s.add_argument("--min-samples-scope", default="all", choices=["all", "group"],
+                   help="group: min_samples within at least one group of --samples-table "
+                        "(default group size - 1), for small RNAs of one sex / tissue / stage")
+    s.add_argument("--samples-table", default=None,
+                   help="samples.tsv with a `group` column (needed with --min-samples-scope group)")
     s.add_argument("--no-peaks", action="store_true",
                    help="loci are whole blocks of overlapping reads (no 5' peak splitting)")
     s.add_argument("--peak-window", type=int, default=2)

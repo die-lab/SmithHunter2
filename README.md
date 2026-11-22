@@ -173,6 +173,7 @@ Other settings, with their defaults:
 | `loci.min_rpm` / `min_count` | 5 / 5 | per-sample thresholds (reads per million and raw reads) |
 | `loci.min_rpm_genome` | 0 (off) | also reads per million reads assigned to the locus' genome in that sample: the threshold then follows the load of a symbiont (with library RPM alone a symbiont holding 20% of the reads passes thousands of loci) |
 | `loci.min_samples` | n − 1 | samples that must reach the thresholds |
+| `loci.min_samples_scope` | `all` | `group`: `min_samples` (default group size − 1) within at least one group of the optional `group` column of `samples.tsv` (sex, tissue, stage), so a small RNA of one condition is not rejected by the others |
 | `loci.exclude_structural` | `none` | drop loci overlapping a structural RNA (tRNA, rRNA, tmRNA, RNase P, SRP, 6S, snoRNA...; needs the annotation): `none`, `sense` (fragments of the RNA itself) or `any` (both strands). Advised `sense` for bacterial symbionts (see Benchmarks on real data) |
 | `loci.min_exact_fraction` | 0 (off) | share of the locus reads aligned without mismatches; reads of an organism missing from the reference fall on conserved sequence with mismatches (spider mite benchmark: false positives 0%, known small RNAs 85-97%). Keep off when the reference is another strain (real loci on SNPs have 0%) |
 | `ends.five_filter` | `dominant` | how the 5' end is tested: `dominant`, `jitter` or `score` (below) |
