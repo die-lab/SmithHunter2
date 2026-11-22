@@ -152,3 +152,41 @@ Advice: with mixed conditions use `group` rather than lowering `min_samples` by 
 - **Clusters** (`cluster_id`, `cluster_size`, `cluster_count`; report only): Aag2 at the
   defaults has 570 passing loci in 513 clusters (57 are further 5' isoforms of a passing locus);
   WsnRNA-46 shows as one cluster of 6 peaks, 157 reads, none passing.
+
+## 8. Beyond Wolbachia, and profile v2 (2026-11-22)
+
+Studies (`prepare.py --study ...`; same layout, `FOCUS=<genome>` for `03_run.sh`):
+
+| study | design | finding |
+|---|---|---|
+| `chlamydia` (Furuse 2014, PRJNA248348) | *C. trachomatis* in HeLa (total + Ago-IP) vs human THP-1 with *M. tuberculosis*; host GRCh38; 11 sRNAs of Albrecht 2010 (`positive_ctr.tsv`, L2b coordinates) | defaults: 1,837 candidates, **14 false positives, all rRNA** (Mtb rRNA reads on the two Chlamydia rRNA operons, sense and antisense; exact fraction 0.01-0.78), 8 of 11 sRNAs |
+| `buchnera_myzus` (Feng 2018, PRJNA395356) | *M. persicae* bacteriocytes vs gut of lines G002, G006, BTIRed; *Buchnera* G002 + pLeu. G006 runs paired with swapped mates: the mate with the 3' adapter is used | the gut holds 0.5% *Buchnera* reads (bacteriocytes 86%): 76 passing loci, 73 also in the bacteriocytes. Contamination, not misassignment: **not a clean negative** |
+| `cardinium` (Li 2018, PRJNA321074) | *B. tabaci* Q, Cardinium-infected vs uninfected, 2 + 2; *Portiera* as exclude genome | the "uninfected" line has more *Cardinium* reads (0.74% vs 0.57%), same exact fraction (0.71 vs 0.74): it carries Cardinium (or labels are swapped). **Not a usable negative** |
+
+Profile grid on the six clean studies (candidates / passing in the negative / known sRNAs):
+
+| study | v1 precise (sense, rpm_genome 100) | v2 precise (any, rpm_genome 0) | v2 sensitive (rpm 2) |
+|---|---|---|---|
+| wAlbB | 109 / 0 / – | 104 / 0 / – | 332 / 0 / – |
+| Aag2 | 172 / 0 / 59 | 497 / 0 / 59 | 1,289 / 0 / 59 |
+| JW18 | 694 / 0 / 46, 59 | 1,808 / 0 / 46, 59 | 3,694 / 1 / 46, 59 |
+| ovary | 0 / 0 / – | 0 / 0 / – | 1 / 0 / – |
+| mite | 14 / 0 / 7542 | 14 / 0 / 7542 (group: 37 / 0 / +744) | 33 / 0 / 7542, 744 |
+| Chlamydia | 270 / **2** / **4 of 11** | 1,628 / 0 / 8 of 11 | 3,566 / 0 / 11 of 11 |
+
+Decisions:
+- **`min_rpm_genome` off in both profiles.** In no study did it remove a false positive (they all
+  go with the structural and exact-read filters); it only cut candidates at high load, and in
+  Chlamydia (23% of the library) it dropped ctrR3/4/6/7, Northern-validated sRNAs. The candidate
+  reduction it gave in JW18 / Aag2 was not shown to be a precision gain.
+- **`exclude_structural: any` in both profiles.** `sense` left the 2 antisense rRNA loci of the
+  Chlamydia negative; `any` removes them and loses no known small RNA in any study (none lies
+  antisense to a structural RNA).
+- Regression fixtures `tests/data/chlamydia_{infected,tet}` (positives and both rRNA operons) pin
+  these results.
+
+Open: a clean negative is the exception for symbionts (contaminated tissue, residual infection,
+cross-talk): an explicit infected vs control comparison (enrichment per locus) is the next filter
+to try, on Buchnera gut and JW18 cross-talk. The *A. pisum* Buchnera benchmark with the Hansen &
+Degnan 2014 / Thairu & Hansen 2019 sRNAs waits for their supplementary tables (PMC refuses
+automated downloads).

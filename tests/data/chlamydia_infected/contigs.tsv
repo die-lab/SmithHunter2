@@ -1,0 +1,4 @@
+ref	genome	contig	length	circular
+chlamydia|NC_010280.1	chlamydia	NC_010280.1	1038869	1
+chlamydia|NC_010285.1	chlamydia	NC_010285.1	7499	1
+chlamydia|filler	chlamydia	filler	18	0

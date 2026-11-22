@@ -1,12 +1,17 @@
-# Profile for a bacterial symbiont as focus genome (precise). Add after the main config:
+# Profile for a bacterial symbiont or intracellular bacterium as focus genome (precise). Add after
+# the main config:
 #   snakemake -s workflow/Snakefile --configfile config/config.yaml config/profiles/symbiont_precise.yaml ...
 # Snakemake merges the files key by key, so only these keys change.
-# Evidence (docs/module_a_benchmarks.md, five infected vs uninfected Wolbachia studies): no false
-# positive in any uninfected line, every known WsnRNA that passes at the defaults still passes,
-# fragments of structural RNAs and reads of other bacteria removed, candidate number no longer
-# driven by the symbiont load (JW18 cells with 20% Wolbachia reads: 1,957 -> ~700).
+# Evidence (docs/module_a_benchmarks.md, section 8): six studies with a clean negative control
+# (five Wolbachia infected vs tetracycline-cured lines; C. trachomatis in HeLa vs human cells with
+# M. tuberculosis): no false positive in any of them, every known small RNA that passes at the
+# defaults still passes (WsnRNA-46/59, WsnRNA-7542, 8 of 11 Chlamydia sRNAs). Fragments of
+# structural RNAs and reads of other bacteria are what the negative controls catch at the defaults.
+# v1 of this profile also set min_rpm_genome: 100; it removed no false positive anywhere and lost
+# 4 of the 8 Chlamydia sRNAs (C. trachomatis 23% of the library), so it is off again.
 loci:
-  exclude_structural: sense   # drop fragments of tRNA, rRNA, tmRNA, RNase P, SRP, 6S (needs the GFF3)
+  exclude_structural: any     # drop loci on tRNA, rRNA, tmRNA, RNase P, SRP, 6S (needs the GFF3),
+                              # both strands: Mycobacterium rRNA reads fall antisense on Chlamydia rRNA
   min_exact_fraction: 0.5     # half of the locus reads without mismatches (off-target organisms)
-  min_rpm_genome: 100         # also 100 reads per million reads of the symbiont, per sample
+  min_rpm_genome: 0
   min_rpm: 5                  # repository default: guards against cross-talk between libraries

@@ -658,9 +658,10 @@ simulated small RNA.
 ## Benchmarks on real data (module A on a bacterial symbiont)
 
 `benchmarks/` holds infected vs uninfected (tetracycline-cured or naturally uninfected)
-*Wolbachia* small RNA-seq studies. Every *Wolbachia* locus passing in the uninfected line is a
-false positive; known *Wolbachia* small RNAs (WsnRNA-46 and WsnRNA-59, Rfam RF02625 / RF02626,
-Mayoral et al. 2014) are the positive control where the strain carries them.
+small RNA-seq studies of intracellular bacteria. Every symbiont locus passing in the uninfected
+line is a false positive; known small RNAs (WsnRNA-46 and WsnRNA-59, Rfam RF02625 / RF02626,
+Mayoral et al. 2014; the WsnRNAs of the spider mite; the *Chlamydia* sRNAs of Albrecht et al. 2010)
+are the positive controls.
 
 | study | host, strain | libraries (infected + uninfected) | scripts |
 |---|---|---|---|
@@ -669,23 +670,30 @@ Mayoral et al. 2014) are the positive control where the strain carries them.
 | PRJEB9710 (Rainey 2016) | *Drosophila* JW18 cells, wMel | 5 + 5 (tetracycline) | `wolbachia_multi/prepare.py --study jw18` |
 | PRJNA439370 (He 2019) | *D. melanogaster* ovaries, wMel | 3 + 3 (tetracycline) | `wolbachia_multi/prepare.py --study ovary` |
 | PRJNA1253370 (iScience 2026) | *Tetranychus truncatus* adults, wTtru | 6 + 6 (tetracycline), 12 published WsnRNAs | `wolbachia_multi/prepare.py --study mite` |
+| PRJNA248348 (Furuse 2014) | HeLa cells, *Chlamydia trachomatis* (L2b reference) | 2 (total, Ago-IP) + 2 (THP-1 cells with *M. tuberculosis*), 11 sRNAs (Albrecht 2010) | `--study chlamydia` |
+| PRJNA395356 (Feng 2018) | *Myzus persicae* bacteriocytes vs gut, *Buchnera* G002 | 3 + 3 | `--study buchnera_myzus` |
+| PRJNA321074 (Li 2018) | *Bemisia tabaci* Q, *Cardinium* | 2 + 2 | `--study cardinium` |
 
 `wolbachia_walbb/05_variants.py` re-runs only `discover` with other settings on a finished
 benchmark (minutes), `06_summary.py` tabulates candidates, false positives, structural share and
 the positive controls over benchmarks and variants, `07_concordance.py` compares studies on the
 same genome. Candidates / passing loci in the uninfected line / known small RNAs passing:
 
-| study (Wolbachia share of the reads) | defaults | `symbiont_precise` | `symbiont_sensitive` |
+| study (symbiont share of the reads) | defaults | `symbiont_precise` | `symbiont_sensitive` |
 |---|---|---|---|
-| wAlbB adults (1.9%) | 157 / 0 / – | 109 / 0 / – | 334 / 0 / – |
-| wMelPop Aag2 cells (15%) | 570 / 0 / WsnRNA-59 | 172 / 0 / WsnRNA-59 | 172 / 0 / WsnRNA-59 |
-| wMel JW18 cells (20%) | 1,957 / 0 / WsnRNA-46, -59 | 694 / 0 / both | 694 / 1 / both |
+| wAlbB adults (1.9%) | 157 / 0 / – | 104 / 0 / – | 332 / 0 / – |
+| wMelPop Aag2 cells (15%) | 570 / 0 / WsnRNA-59 | 497 / 0 / WsnRNA-59 | 1,289 / 0 / WsnRNA-59 |
+| wMel JW18 cells (20%) | 1,957 / 0 / WsnRNA-46, -59 | 1,808 / 0 / both | 3,694 / 1 / both |
 | wMel ovaries (0.03%) | 0 / 0 / – | 0 / 0 / – | 1 / 0 / – |
 | wTtru spider mite (0.35%) | 22 / **2** / 1 of ~9 loci | 14 / 0 / 1 | 33 / 0 / 2 |
+| *C. trachomatis* HeLa (23%) | 1,837 / **14** / 8 of 11 | 1,628 / 0 / 8 | 3,566 / 0 / 11 |
 
-The host reads stay off the symbiont (no misassignment in any study). Too many candidates come from
-fragments of structural RNAs and from the library-RPM threshold, which follows the symbiont load;
-the two false positives of the mite are reads of another bacterium (0% reads without mismatches).
+The host reads stay off the symbiont (no misassignment in any study). The false positives are reads
+of another bacterium: the mite's on conserved sequence (0% reads without mismatches), the
+*M. tuberculosis* rRNA reads on the *Chlamydia* rRNA operons (both strands). Two negative controls
+are not clean and measure no false positive: the *M. persicae* gut has 0.5% *Buchnera* reads
+(bacteriocyte contamination; 73 of its 76 passing loci are small RNAs of the bacteriocytes), and
+the "uninfected" whiteflies have as many *Cardinium* reads as the infected ones.
 Details and all variants: `docs/module_a_benchmarks.md`.
 
 ### Recommended settings for a bacterial symbiont
@@ -699,14 +707,18 @@ snakemake -s workflow/Snakefile --cores 8 \
 
 | profile | `exclude_structural` | `min_exact_fraction` | `min_rpm_genome` | `min_rpm` | use |
 |---|---|---|---|---|---|
-| `symbiont_precise` | `sense` | 0.5 | 100 | 5 | default choice: no false positive in five studies, keeps every known small RNA the defaults find |
-| `symbiont_sensitive` | `sense` | 0.5 | 100 | 2 | symbiont well below 1% of the library; more candidates at moderate load, and cross-talk of the most abundant symbiont small RNAs can pass in a library without the symbiont |
+| `symbiont_precise` | `any` | 0.5 | 0 | 5 | default choice: no false positive in six clean negative controls, keeps every known small RNA the defaults find |
+| `symbiont_sensitive` | `any` | 0.5 | 0 | 2 | symbiont well below 1% of the library, or more known small RNAs (Chlamydia 11 of 11); 2-3x the candidates at high load, and cross-talk of the most abundant symbiont small RNAs can pass in a library without the symbiont (JW18: 1) |
+
+`loci.min_rpm_genome` stays available but is off in both profiles: it removed no false positive
+in any study and, with the symbiont at 20-23% of the library, it drops known small RNAs (4 of the
+8 *Chlamydia* sRNAs at 100).
 
 With pools that differ (sexes, tissues, stages) add a `group` column to `samples.tsv` and set
 `loci.min_samples_scope: group`: a small RNA of one condition then needs group size − 1 samples of
 its own group instead of n − 1 of all (mite, 3 female + 3 male pools, no false positive in any
 case: `symbiont_precise` 14 candidates and 1 WsnRNA locus, with `group` 37 and 2, adding the
-male-biased WsnRNA-744; with `group` and `min_rpm` 1, 238 and 4 of ~9).
+male-biased WsnRNA-744; `symbiont_sensitive` with `group` 108 and 2).
 
 ## Testing
 

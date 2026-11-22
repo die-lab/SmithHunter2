@@ -97,3 +97,39 @@ def test_mite_male_biased_small_rna_needs_the_group_scope(tmp_path, monkeypatch)
 def test_mite_cured_line_stays_clean_with_the_group_scope(tmp_path, monkeypatch):
     rows = run("mite_tet", tmp_path, monkeypatch, PRECISE, {"loci": {"min_samples_scope": "group"}})
     assert not [r for r in rows if r["pass"] == "1"]
+
+
+# Chlamydia trachomatis in HeLa vs human THP-1 cells with M. tuberculosis (Furuse 2014);
+# known sRNAs of Albrecht 2010 (benchmarks/wolbachia_multi/positive_ctr.tsv)
+CTR = {name: ("NC_010285.1" if name == "pL2-sRNA1" else "NC_010280.1", s, e, st) for name, s, e, st in [
+    ("ihtA", 53029, 53137, "+"), ("ctrR1", 53220, 53363, "+"), ("ctrR2", 126536, 126638, "-"),
+    ("ctrR3", 342838, 342947, "-"), ("ctrR4", 497963, 498126, "-"), ("ctrR5", 586269, 586341, "+"),
+    ("ctrR6", 725268, 725411, "-"), ("ctrR7", 876384, 876694, "-"), ("ctrR8", 938403, 938509, "+"),
+    ("ctrR0332", 416302, 416641, "+"), ("pL2-sRNA1", 213, 292, "+")]}
+CTR_PRECISE = {"ctrR1", "ctrR3", "ctrR4", "ctrR6", "ctrR7", "ctrR8", "ctrR0332", "pL2-sRNA1"}
+SENSITIVE = yaml.safe_load((REPO / "config/profiles/symbiont_sensitive.yaml").read_text())
+
+
+def found(rows) -> set[str]:
+    return {name for name, where in CTR.items() if passing(rows, where)}
+
+
+def test_chlamydia_known_srnas_with_the_profiles(tmp_path, monkeypatch):
+    assert found(run("chlamydia_infected", tmp_path, monkeypatch, PRECISE)) == CTR_PRECISE
+    assert found(run("chlamydia_infected", tmp_path, monkeypatch, SENSITIVE)) == set(CTR)
+
+
+def test_chlamydia_min_rpm_genome_loses_known_srnas_at_high_load(tmp_path, monkeypatch):
+    # why the profiles no longer set min_rpm_genome: C. trachomatis holds 23% of the library
+    rows = run("chlamydia_infected", tmp_path, monkeypatch, PRECISE, {"loci": {"min_rpm_genome": 100}})
+    assert found(rows) == {"ctrR1", "ctrR8", "ctrR0332", "pL2-sRNA1"}
+
+
+def test_chlamydia_negative_control_rrna_reads_of_another_bacterium(tmp_path, monkeypatch):
+    # M. tuberculosis rRNA reads land on the Chlamydia rRNA operons, on both strands
+    rows = run("chlamydia_tet", tmp_path, monkeypatch)
+    hits = [r for r in rows if r["pass"] == "1"]
+    assert hits and all(r["annotation_class"] == "rRNA" for r in hits)
+    sense = run("chlamydia_tet", tmp_path, monkeypatch, PRECISE, {"loci": {"exclude_structural": "sense"}})
+    assert {r["structural"] for r in sense if r["pass"] == "1"} == {"antisense"}
+    assert not [r for r in run("chlamydia_tet", tmp_path, monkeypatch, PRECISE) if r["pass"] == "1"]

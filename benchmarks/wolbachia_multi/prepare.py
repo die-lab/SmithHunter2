@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Download and configure one more infected vs uninfected Wolbachia small RNA study.
+"""Download and configure one more infected vs uninfected symbiont small RNA study
+(Wolbachia; Buchnera with a symbiont-free tissue as the negative).
 
     python3 prepare.py --study jw18 --bench ~/bench_wolb/jw18 [--data ~/bench_wolb/dmel_data]
 
@@ -37,8 +38,27 @@ AAEG = {"url": "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/002/204/515/GCF_002
 TTRU = {"url": "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/028/476/895/GCA_028476895.1_ASM2847689v1/"
                "GCA_028476895.1_ASM2847689v1_genomic.fna.gz",   # 3 chromosomes, no mitochondrion
         "mito": "NC_024874.1", "mito_separate": True}
+MPER = {"url": "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/001/856/785/"
+               "GCF_001856785.1_MPER_G0061.0/GCF_001856785.1_MPER_G0061.0_genomic.fna.gz",
+        "mito": "NC_029727.1"}   # Myzus persicae clone G006 (one of the Feng 2018 lines)
 WMEL = {"accession": "NC_002978.6"}   # also the closest complete reference for wMelPop
 WTTRU = {"accession": "NZ_CP099592.1"}   # GCF_024205405.1, one circular chromosome
+# Buchnera of M. persicae G002: chromosome NZ_CP002701.1 + plasmid pLeu NZ_CP002702.1
+BUCH_G002 = {"assembly": "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/521/565/"
+                         "GCF_000521565.1_ASM52156v1/GCF_000521565.1_ASM52156v1"}
+HSAP = {"url": "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/"
+               "GCF_000001405.40_GRCh38.p14_genomic.fna.gz",
+        "mito": "NC_012920.1"}
+BTAB_Q = {"url": "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/003/994/315/GCA_003994315.1_CAAS_Bemtab1.0/"
+                 "GCA_003994315.1_CAAS_Bemtab1.0_genomic.fna.gz",   # isolate CAASIVF2012BtQ, no mito
+          "mito": "KU663131.1", "mito_separate": True}
+CTR_L2B = {"accession": "NC_010280.1,NC_010285.1"}   # C. trachomatis L2b/UCH-1 chromosome + pL2
+# Cardinium of B. tabaci (China, CAAS): 3 scaffolds (993,648 / 2,448 / 713 bp): linear
+CARD_BTAB = {"assembly": "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/004/300/865/"
+                         "GCF_004300865.1_CAAS_CanCar1.0/GCF_004300865.1_CAAS_CanCar1.0", "linear": True}
+PORTIERA_MED = {"accession": "NZ_CP016304.1"}   # obligate symbiont of B. tabaci MED, in both lines
+TRUSEQ_SMALL = "TGGAATTCTCGGGTGCCAAGG"
+ILLUMINA_UNIVERSAL = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC"
 
 # group -> (field, regex) on the ENA run table; every other run is ignored
 STUDIES = {
@@ -68,6 +88,36 @@ STUDIES = {
                    "tet": ("run_accession", r"^SRR3323(0423|0424|0425|0426|0431|0432)$")},
         "adapter": "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA",   # NEBNext small RNA
         "sample_groups": ("sample_alias", {"male": r"M\d$", "female": r"F\d$"}),
+    },
+    "buchnera_myzus": {   # Feng et al. 2018 Mol Ecol (PMID 29271121): M. persicae lines G002,
+                # G006, BTIRed; bacteriocytes (Buchnera) vs gut (no Buchnera) of the same lines.
+                # `tet` holds the gut libraries: the negative control is a tissue, not a cured line.
+                # G006 runs are paired 2 x 101 with the mates swapped between runs: the mate that
+                # carries the TruSeq small RNA 3' adapter is the sense strand and the only one used.
+                # G002 / BTIRed: single 52 nt, Illumina universal adapter. Both go to fastp.
+        "accession": "PRJNA395356", "host": MPER, "focus": BUCH_G002,
+        "groups": {"infected": ("experiment_title", r"Myzus persicae \S+: Bacteriocyte$"),
+                   "tet": ("experiment_title", r"Myzus persicae \S+: Gut$")},
+        "adapter": "", "adapters": [TRUSEQ_SMALL, ILLUMINA_UNIVERSAL], "sense_adapter": TRUSEQ_SMALL[:12],
+        "focus_name": "buchnera",   # FOCUS=buchnera for 03_run.sh / --genome for 05_variants.py
+    },
+    "chlamydia": {   # Furuse et al. 2014 PLoS One (PMID 25184567): small RNA-seq of infected cells,
+                # total and RISC (Ago-IP) libraries, reads already trimmed. `infected`: C. trachomatis
+                # in HeLa; `tet`: M. tuberculosis in THP-1 (human cells without Chlamydia: the
+                # negative, and reads of another bacterium, not in the reference, as off-target test).
+                # Known sRNAs: positive_ctr.tsv (Albrecht et al. 2010, L2b coordinates).
+        "accession": "PRJNA248348", "host": HSAP, "focus": CTR_L2B,
+        "groups": {"infected": ("experiment_title", r"Chlamydia trachomatis in HeLa"),
+                   "tet": ("experiment_title", r"Mycobacterium tuberculosis in THP-1")},
+        "adapter": "", "focus_name": "chlamydia",
+    },
+    "cardinium": {   # Li et al. 2018 Front Physiol (PMID 30483149): B. tabaci Q, Cardinium-infected
+                # vs uninfected of the same genetic background, 2 + 2 libraries. No known Cardinium
+                # small RNAs: negative control only. Portiera (in both lines) is an exclude genome.
+        "accession": "PRJNA321074", "host": BTAB_Q, "focus": CARD_BTAB,
+        "groups": {"infected": ("sample_alias", r"^CI\d$"), "tet": ("sample_alias", r"^CU\d$")},
+        "adapter": ILLUMINA_UNIVERSAL, "focus_name": "cardinium",
+        "extra_genomes": {"portiera": PORTIERA_MED},
     },
 }
 
@@ -115,11 +165,43 @@ def fetch_checked(url: str, out: Path, prefix: bytes) -> None:
     tmp.rename(out)
 
 
+def gunzip_checked(src: Path, out: Path, prefix: str) -> None:
+    if out.exists():
+        return
+    tmp = out.with_name(out.name + ".tmp")
+    with gzip.open(src, "rt") as fh, open(tmp, "w") as fo:
+        first = fh.readline()
+        if not first.startswith(prefix):
+            sys.exit(f"{src}: unexpected content {first[:80]!r}")
+        fo.write(first)
+        for line in fh:
+            fo.write(line)
+    tmp.rename(out)
+
+
+def bacterium(spec: dict, data: Path, name: str) -> None:
+    """data/<name>.fasta and .gff3 from an assembly (all its sequences) or accession(s)."""
+    if "assembly" in spec:   # whole assembly: chromosome and plasmids / scaffolds
+        base = spec["assembly"]
+        curl(base + "_genomic.fna.gz", data / f"{name}.fna.gz")
+        curl(base + "_genomic.gff.gz", data / f"{name}.gff.gz")
+        gunzip_checked(data / f"{name}.fna.gz", data / f"{name}.fasta", ">")
+        gunzip_checked(data / f"{name}.gff.gz", data / f"{name}.gff3", "##gff-version")
+    else:   # one accession or several, comma separated
+        acc = spec["accession"]
+        fetch_checked(EUTILS.format(acc=acc, fmt="fasta"), data / f"{name}.fasta", b">")
+        fetch_checked(GFF3.format(acc=acc), data / f"{name}.gff3", b"##gff-version")
+        want = set(acc.split(","))
+        got = {line[1:].split()[0] for line in open(data / f"{name}.fasta") if line.startswith(">")}
+        if got != want:
+            sys.exit(f"{name}.fasta: sequences {sorted(got)}, expected {sorted(want)}")
+
+
 def genomes(spec: dict, data: Path) -> None:
     data.mkdir(parents=True, exist_ok=True)
-    focus = spec["focus"]["accession"]
-    fetch_checked(EUTILS.format(acc=focus, fmt="fasta"), data / "focus.fasta", b">")
-    fetch_checked(GFF3.format(acc=focus), data / "focus.gff3", b"##gff-version")
+    bacterium(spec["focus"], data, "focus")
+    for name, extra in spec.get("extra_genomes", {}).items():
+        bacterium(extra, data, name)
     host = data / "host.fna.gz"
     curl(spec["host"]["url"], host)
     mt, nuc = data / "host_mt.fasta", data / "host_nuc.fasta"
@@ -142,6 +224,40 @@ def genomes(spec: dict, data: Path) -> None:
                 out.write(line)
         if mt.stat().st_size == 0:
             sys.exit(f"mito contig {mito} not found")
+
+
+def head_reads(url: str, n: int = 2000) -> list[str]:
+    """First n read sequences of a gzipped fastq (streamed, no file written)."""
+    req = urllib.request.Request(f"https://{url}")
+    with urllib.request.urlopen(req, timeout=120) as r, gzip.GzipFile(fileobj=r) as gz:
+        reads = []
+        for i, line in enumerate(io.TextIOWrapper(gz)):
+            if i % 4 == 1:
+                reads.append(line.strip())
+                if len(reads) >= n:
+                    break
+    return reads
+
+
+def sense_mate(urls: list[str], adapter: str) -> str:
+    """Single-end runs: the only file. Paired small RNA runs: the mate whose reads carry the
+    3' adapter (the sense strand of the small RNA), the other one reads the 5' adapter."""
+    singles = [u for u in urls if not re.search(r"_[12]\.fastq\.gz$", u)]
+    mates = [u for u in urls if re.search(r"_[12]\.fastq\.gz$", u)]
+    if not mates:
+        return urls[0]
+    if not adapter:
+        return singles[0] if singles else mates[0]
+    share = {}
+    for u in mates:
+        reads = head_reads(u)
+        share[u] = sum(adapter in s for s in reads) / max(1, len(reads))
+    best = max(share, key=share.get)
+    print(f"  {Path(best).name}: sense mate ({', '.join(f'{Path(u).name} {v:.0%}' for u, v in share.items())} "
+          f"with {adapter})")
+    if share[best] < 0.5 or sorted(share.values())[0] > 0.1:
+        sys.exit(f"cannot tell the sense mate of {urls}: {share}")
+    return best
 
 
 def main() -> None:
@@ -180,7 +296,8 @@ def main() -> None:
 
     for rs in chosen.values():
         for r in rs:
-            url = r["fastq_ftp"].split(";")[0]
+            urls = [u for u in r["fastq_ftp"].split(";") if u]
+            url = sense_mate(urls, spec.get("sense_adapter", ""))
             curl(f"https://{url}", bench / "fastq" / f"{r['run_accession']}.fastq.gz")
     genomes(spec, data)
     if not (bench / "data").exists():
@@ -201,6 +318,24 @@ def main() -> None:
                 (d / name).symlink_to(Path("..") / name)
         text = (template.replace("@GROUP@", group).replace("@THREADS@", str(args.threads))
                 .replace("@ADAPTER@", spec["adapter"]))
+        if spec.get("focus_name"):
+            if "\n  wolbachia:\n" not in text:
+                sys.exit("config template changed: genome wolbachia not found")
+            text = text.replace("\n  wolbachia:\n", f"\n  {spec['focus_name']}:\n")
+        if spec["focus"].get("linear"):   # scaffolds: no wrap around their ends
+            text = text.replace("    topology: circular", "    topology: linear", 1)
+        for name, extra in spec.get("extra_genomes", {}).items():
+            if "\n  host_mt:\n" not in text:
+                sys.exit("config template changed: host_mt not found")
+            block = (f"\n  {name}:\n    fasta: data/{name}.fasta\n    role: exclude\n"
+                     f"    topology: {'linear' if extra.get('linear') else 'circular'}\n")
+            text = text.replace("\n  host_mt:\n", block + "  host_mt:\n", 1)
+        if spec.get("adapters"):   # libraries with different adapters in one line
+            fa = bench / "adapters.fa"
+            fa.write_text("".join(f">adapter{i + 1}\n{a}\n" for i, a in enumerate(spec["adapters"])))
+            if '  extra: ""' not in text:
+                sys.exit("config template changed: trimming extra not found")
+            text = text.replace('  extra: ""', f'  extra: "--adapter_fasta {fa}"')
         (d / "config/config.yaml").write_text(text)
         field, patterns = spec.get("sample_groups", ("", {}))
         with open(d / "config/samples.tsv", "w") as fh:
@@ -212,7 +347,8 @@ def main() -> None:
                 grp = next((g for g, rx in patterns.items() if re.search(rx, r.get(field, ""))), "")
                 fh.write(f"{name}\t{bench / 'fastq' / (r['run_accession'] + '.fastq.gz')}\t\t{grp}\n")
         print(f"wrote {d}/config")
-    print("next: BENCH=<bench> GENOME_FASTA=data/focus.fasta CORES=8 bash ../wolbachia_walbb/03_run.sh")
+    focus = f"FOCUS={spec['focus_name']} " if spec.get("focus_name") else ""
+    print(f"next: BENCH=<bench> {focus}GENOME_FASTA=data/focus.fasta CORES=8 bash ../wolbachia_walbb/03_run.sh")
 
 
 if __name__ == "__main__":

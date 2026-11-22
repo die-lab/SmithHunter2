@@ -1,0 +1,12 @@
+name	contig	start	end	strand	source
+ihtA	NC_010280.1	53029	53137	+	Albrecht et al. 2010 NAR Table 2 (L2b/UCH-1; Northern); 109 nt
+ctrR1	NC_010280.1	53220	53363	+	Table 2; 144 nt
+ctrR2	NC_010280.1	126536	126638	-	Table 2 (start 126 638 > end: minus strand); 103 nt
+ctrR3	NC_010280.1	342838	342947	-	Table 2; 110 nt
+ctrR4	NC_010280.1	497963	498126	-	Table 2; 164 nt
+ctrR5	NC_010280.1	586269	586341	+	Table 2; 73 nt
+ctrR6	NC_010280.1	725268	725411	-	Table 2; 144 nt
+ctrR7	NC_010280.1	876384	876694	-	Table 2; 311 nt
+ctrR8	NC_010280.1	938403	938509	+	Table 2; 107 nt
+ctrR0332	NC_010280.1	416302	416641	+	Table 2; processed into ~80 and ~240 nt RNAs (Northern), most abundant
+pL2-sRNA1	NC_010285.1	213	292	+	Table 2 (plasmid; strand from start < end); 90 nt

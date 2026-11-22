@@ -185,7 +185,9 @@ def check(out: Path, cfg: dict, res: Path, args) -> None:
     for k in sorted(set(full) | set(small)):
         a, b = full.get(k), small.get(k)
         if not a or not b:
-            bad.append(f"{k}: only in {'fixture' if b else 'full run'}")
+            # background loci never pass; their chains can be cut at the edge of a window
+            if k[3] != "background":
+                bad.append(f"{k}: only in {'fixture' if b else 'full run'}")
             continue
         for col in CHECK + [c for c in a if c.startswith("rpm_genome_")]:
             if col in a and col in b and not same(a[col], b[col]):

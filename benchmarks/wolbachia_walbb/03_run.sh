@@ -50,7 +50,7 @@ fi
 if [ "$STEP" = all ] || [ "$STEP" = compare ]; then
     cd "$BENCH"
     python3 "$HERE/04_compare.py" --infected infected/results --tet tet/results \
-        --genome wolbachia --genome-fasta "${GENOME_FASTA:-data/wAlbB.fasta}" \
+        --genome "${FOCUS:-wolbachia}" --genome-fasta "${GENOME_FASTA:-data/wAlbB.fasta}" \
         ${POSITIVE:+--positive "$POSITIVE"} \
         ${V0_FASTA:+--v0-fasta "$V0_FASTA"} | tee compare_report.md
     echo "report: $BENCH/compare_report.md"
