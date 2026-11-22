@@ -1,0 +1,14 @@
+# Profile for a symbiont at low load (well below 1% of the library). Add after the main config:
+#   snakemake -s workflow/Snakefile --configfile config/config.yaml config/profiles/symbiont_sensitive.yaml ...
+# As symbiont_precise.yaml with a lower library threshold. Evidence (docs/module_a_benchmarks.md):
+# spider mite (Wolbachia 0.35% of the reads) 2 of ~9 published WsnRNA loci instead of 1, no false
+# positive; costs: in a high-load study (JW18) one locus passes in the cured line (cross-talk of the
+# most abundant Wolbachia small RNA), and at moderate load (wAlbB 1.9%) the candidates double.
+# With pools that differ (sexes, tissues), also set loci.min_samples to the replicates of one
+# kind (mite, 3 female + 3 male pools: min_samples 3 with min_rpm 1 and min_rpm_genome 200
+# recovers 4 WsnRNA loci with no false positive; with min_rpm 2, 2 loci).
+loci:
+  exclude_structural: sense
+  min_exact_fraction: 0.5
+  min_rpm_genome: 100
+  min_rpm: 2

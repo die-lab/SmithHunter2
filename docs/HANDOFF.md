@@ -184,3 +184,17 @@ follow section 5 in order. Follow the server rules in section 0 (write only insi
 - Tests need a SHORT `TMPDIR` (e.g. `~/THE_CAPTAIN/tt`), otherwise AF_UNIX forkserver paths are too long.
 - Next: step 1 write-up in the log, step 3 (verify discrepancies), re-run `predictors` and `genelevel`,
   then step 4 (ask the user about CPU first).
+
+## 9. Module A on Wolbachia: real-data benchmarks (2026-11-21/22, branch `wolbachia-benchmark`)
+
+- Branch `wolbachia-benchmark` from `host-parasite` (local commits only, NOT pushed: the user
+  asked for no push in this task). Commits: wAlbB benchmark patch (without its CLAUDE.md hunk,
+  which conflicted), structural RNA flag/filter, benchmark tooling, `min_rpm_genome`,
+  `exact_fraction` / `min_exact_fraction`.
+- Everything about data, findings and decisions is in `docs/module_a_benchmarks.md`.
+- Server data (all inside THE_CAPTAIN): `bench_walbb/` (wAlbB, PRJNA671731), `bench_aag2/`
+  (Aag2 +/- wMelPop, PRJNA238976), `bench_wolb/{jw18,ovary,mite}/` (+ `dmel_data/` shared genomes);
+  each with `variants/<name>/` from `05_variants.py`. Grid logs in `tt/grid*.log`.
+- New options (all default off, results unchanged): `loci.exclude_structural`,
+  `loci.min_rpm_genome`, `loci.min_exact_fraction`; new loci.tsv columns `structural`,
+  `structural_pass`, `exact_fraction`, `exact_pass`.

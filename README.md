@@ -665,19 +665,44 @@ Mayoral et al. 2014) are the positive control where the strain carries them.
 | PRJNA238976 / GSE55210 (Mayoral 2014) | *Ae. aegypti* Aag2 cells, wMelPop | 2 + 2 (uninfected line) | `wolbachia_multi/` (data already used in module B) |
 | PRJEB9710 (Rainey 2016) | *Drosophila* JW18 cells, wMel | 5 + 5 (tetracycline) | `wolbachia_multi/prepare.py --study jw18` |
 | PRJNA439370 (He 2019) | *D. melanogaster* ovaries, wMel | 3 + 3 (tetracycline) | `wolbachia_multi/prepare.py --study ovary` |
+| PRJNA1253370 (iScience 2026) | *Tetranychus truncatus* adults, wTtru | 6 + 6 (tetracycline), 12 published WsnRNAs | `wolbachia_multi/prepare.py --study mite` |
 
 `wolbachia_walbb/05_variants.py` re-runs only `discover` with other settings on a finished
 benchmark (minutes), `06_summary.py` tabulates candidates, false positives, structural share and
-the positive controls over benchmarks and variants. Results so far (repository defaults):
+the positive controls over benchmarks and variants, `07_concordance.py` compares studies on the
+same genome. Candidates / passing loci in the uninfected line / known small RNAs passing:
 
-| study | infected passing | uninfected passing | structural (share of their reads) | WsnRNA-46 / -59 |
-|---|---|---|---|---|
-| wAlbB adults | 157 | 0 | 40 (58%) | absent from wAlbB |
-| wMelPop Aag2 cells | 570 | 0 | 67 (88%) | reads but fails / **passes** |
+| study (Wolbachia share of the reads) | defaults | `symbiont_precise` | `symbiont_sensitive` |
+|---|---|---|---|
+| wAlbB adults (1.9%) | 157 / 0 / – | 109 / 0 / – | 334 / 0 / – |
+| wMelPop Aag2 cells (15%) | 570 / 0 / WsnRNA-59 | 172 / 0 / WsnRNA-59 | 172 / 0 / WsnRNA-59 |
+| wMel JW18 cells (20%) | 1,957 / 0 / WsnRNA-46, -59 | 694 / 0 / both | 694 / 1 / both |
+| wMel ovaries (0.03%) | 0 / 0 / – | 0 / 0 / – | 1 / 0 / – |
+| wTtru spider mite (0.35%) | 22 / **2** / 1 of ~9 loci | 14 / 0 / 1 | 33 / 0 / 2 |
 
-No false positives so far: the genome assignment keeps host reads off the symbiont. The excess of
-candidates comes from fragments of abundant structural RNAs and from a lenient expression
-threshold (the candidate count halves from `min_rpm` 5 to 10).
+The host reads stay off the symbiont (no misassignment in any study). Too many candidates come from
+fragments of structural RNAs and from the library-RPM threshold, which follows the symbiont load;
+the two false positives of the mite are reads of another bacterium (0% reads without mismatches).
+Details and all variants: `docs/module_a_benchmarks.md`.
+
+### Recommended settings for a bacterial symbiont
+
+Add a profile after the main config (Snakemake merges them key by key):
+
+```bash
+snakemake -s workflow/Snakefile --cores 8 \
+    --configfile config/config.yaml config/profiles/symbiont_precise.yaml
+```
+
+| profile | `exclude_structural` | `min_exact_fraction` | `min_rpm_genome` | `min_rpm` | use |
+|---|---|---|---|---|---|
+| `symbiont_precise` | `sense` | 0.5 | 100 | 5 | default choice: no false positive in five studies, keeps every known small RNA the defaults find |
+| `symbiont_sensitive` | `sense` | 0.5 | 100 | 2 | symbiont well below 1% of the library; more candidates at moderate load, and cross-talk of the most abundant symbiont small RNAs can pass in a library without the symbiont |
+
+With pools that differ (sexes, tissues, stages) set `loci.min_samples` to the replicates of one
+kind: a sex-biased small RNA fails n − 1 (mite, 3 female + 3 male pools: `min_samples` 3 with
+`min_rpm` 1, `min_rpm_genome` 200 and the other `symbiont` keys recovers 4 of ~9 WsnRNA loci, 205
+candidates, no false positive; with `min_rpm` 2 it recovers 2).
 
 ## Testing
 

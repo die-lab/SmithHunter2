@@ -1,0 +1,12 @@
+# Profile for a bacterial symbiont as focus genome (precise). Add after the main config:
+#   snakemake -s workflow/Snakefile --configfile config/config.yaml config/profiles/symbiont_precise.yaml ...
+# Snakemake merges the files key by key, so only these keys change.
+# Evidence (docs/module_a_benchmarks.md, five infected vs uninfected Wolbachia studies): no false
+# positive in any uninfected line, every known WsnRNA that passes at the defaults still passes,
+# fragments of structural RNAs and reads of other bacteria removed, candidate number no longer
+# driven by the symbiont load (JW18 cells with 20% Wolbachia reads: 1,957 -> ~700).
+loci:
+  exclude_structural: sense   # drop fragments of tRNA, rRNA, tmRNA, RNase P, SRP, 6S (needs the GFF3)
+  min_exact_fraction: 0.5     # half of the locus reads without mismatches (off-target organisms)
+  min_rpm_genome: 100         # also 100 reads per million reads of the symbiont, per sample
+  min_rpm: 5                  # repository default: guards against cross-talk between libraries
