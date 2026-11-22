@@ -106,11 +106,26 @@ defaults kept, 1.5-3x fewer candidates. For the maintainer's 300+ vs 105 questio
 with `symbiont_precise` and compare again; the remaining gap is expected from v0 clustering by
 sequence (several v2 peaks can be one v0 cluster and vice versa).
 
+### Condition-aware `min_samples` (bea877c)
+
+`loci.min_samples_scope: group` with a `group` column in `samples.tsv`: a locus passes the
+expression filter in group size − 1 samples of at least one group. Mite (sex as group), all with 0
+passing loci in the cured line:
+
+| variant | candidates | WsnRNA loci |
+|---|---|---|
+| `symbiont_precise` | 14 | 7542 |
+| `symbiont_precise` + group | 37 | 7542, 744 |
+| `symbiont_sensitive` + group | 112 | 7542, 744 |
+| `symbiont_precise` + group + `min_rpm` 1 | 238 | 7542, 744, 6108 family, 89 |
+
+Advice: with mixed conditions use `group` rather than lowering `min_samples` by hand.
+
 ## 6. Open
 
 - Sensitivity at low load is limited by the library threshold; the 6108 family and WsnRNA-89 of
-  the mite need `min_rpm` 1 + `min_samples` 3. A replicate-aware rule (e.g. reproducibility across
-  pools instead of fixed RPM) could recover them without the cross-talk cost; not tried.
+  the mite need `min_rpm` 1 (with group scope: 238 candidates, no false positive here, but in JW18
+  `min_rpm` 1 lets cross-talk of the top symbiont small RNAs pass in the cured line).
 - WsnRNA-46 in Aag2 (~170 reads split in 5' isoforms of the hairpin arm) fails isolation: a
   precursor-aware grouping of arm isoforms would help hairpin-derived small RNAs.
 - No v0 comparison was run (about a day per line; only with the maintainer's permission).

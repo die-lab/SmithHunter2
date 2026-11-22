@@ -700,10 +700,11 @@ snakemake -s workflow/Snakefile --cores 8 \
 | `symbiont_precise` | `sense` | 0.5 | 100 | 5 | default choice: no false positive in five studies, keeps every known small RNA the defaults find |
 | `symbiont_sensitive` | `sense` | 0.5 | 100 | 2 | symbiont well below 1% of the library; more candidates at moderate load, and cross-talk of the most abundant symbiont small RNAs can pass in a library without the symbiont |
 
-With pools that differ (sexes, tissues, stages) set `loci.min_samples` to the replicates of one
-kind: a sex-biased small RNA fails n − 1 (mite, 3 female + 3 male pools: `min_samples` 3 with
-`min_rpm` 1, `min_rpm_genome` 200 and the other `symbiont` keys recovers 4 of ~9 WsnRNA loci, 205
-candidates, no false positive; with `min_rpm` 2 it recovers 2).
+With pools that differ (sexes, tissues, stages) add a `group` column to `samples.tsv` and set
+`loci.min_samples_scope: group`: a small RNA of one condition then needs group size − 1 samples of
+its own group instead of n − 1 of all (mite, 3 female + 3 male pools, no false positive in any
+case: `symbiont_precise` 14 candidates and 1 WsnRNA locus, with `group` 37 and 2, adding the
+male-biased WsnRNA-744; with `group` and `min_rpm` 1, 238 and 4 of ~9).
 
 ## Testing
 
