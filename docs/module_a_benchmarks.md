@@ -162,8 +162,10 @@ Studies (`prepare.py --study ...`; same layout, `FOCUS=<genome>` for `03_run.sh`
 | `chlamydia` (Furuse 2014, PRJNA248348) | *C. trachomatis* in HeLa (total + Ago-IP) vs human THP-1 with *M. tuberculosis*; host GRCh38; 11 sRNAs of Albrecht 2010 (`positive_ctr.tsv`, L2b coordinates) | defaults: 1,837 candidates, **14 false positives, all rRNA** (Mtb rRNA reads on the two Chlamydia rRNA operons, sense and antisense; exact fraction 0.01-0.78), 8 of 11 sRNAs |
 | `buchnera_myzus` (Feng 2018, PRJNA395356) | *M. persicae* bacteriocytes vs gut of lines G002, G006, BTIRed; *Buchnera* G002 + pLeu. G006 runs paired with swapped mates: the mate with the 3' adapter is used | the gut holds 0.5% *Buchnera* reads (bacteriocytes 86%): 76 passing loci, 73 also in the bacteriocytes. Contamination, not misassignment: **not a clean negative** |
 | `cardinium` (Li 2018, PRJNA321074) | *B. tabaci* Q, Cardinium-infected vs uninfected, 2 + 2; *Portiera* as exclude genome | the "uninfected" line has more *Cardinium* reads (0.74% vs 0.57%), same exact fraction (0.71 vs 0.74): it carries Cardinium (or labels are swapped). **Not a usable negative** |
+| `mtb` (Furuse 2014, PRJNA248348) | *M. tuberculosis* H37Rv in THP-1 vs *C. trachomatis* in HeLa (the Chlamydia study reversed); host GRCh38; 19 RefSeq "putative small regulatory RNA" ncRNAs of H37Rv (`positive_mtb.tsv`, 4.5S excluded) | 5.9% Mtb reads. Defaults: 2,536 candidates, **11 false positives** (6 rRNA, 0.019% of the negative's reads on Mtb), 8 of 19 sRNAs (B55, mcr3, mcr11, mcr15, G2, MTS1338, B11, MTS2823) |
+| `legionella` (Furuse 2014) | *L. pneumophila* Philadelphia-1 in RAW 264.7 vs *M. marinum* / *M. smegmatis* in RAW; host GRCm39 | 2.7% Legionella reads. Defaults: 625 candidates, **3 false positives, all one 23S rRNA read** (3 operons). No positive set: Rfam has no *L. pneumophila* RsmY/RsmZ region, only 6S (structural) |
 
-Profile grid on the six clean studies (candidates / passing in the negative / known sRNAs):
+Profile grid on the clean studies (candidates / passing in the negative / known sRNAs):
 
 | study | v1 precise (sense, rpm_genome 100) | v2 precise (any, rpm_genome 0) | v2 sensitive (rpm 2) |
 |---|---|---|---|
@@ -173,6 +175,16 @@ Profile grid on the six clean studies (candidates / passing in the negative / kn
 | ovary | 0 / 0 / – | 0 / 0 / – | 1 / 0 / – |
 | mite | 14 / 0 / 7542 | 14 / 0 / 7542 (group: 37 / 0 / +744) | 33 / 0 / 7542, 744 |
 | Chlamydia | 270 / **2** / **4 of 11** | 1,628 / 0 / 8 of 11 | 3,566 / 0 / 11 of 11 |
+| M. tuberculosis | – | 2,425 / 0 / 8 of 19 | 6,107 / 0 / 8 of 19 |
+| Legionella | – | 530 / 0 / – | 1,614 / 0 / – |
+
+v2 confirmed on two more studies run after the decision (2026-11-23): every false positive at
+defaults (11 Mtb, 3 Legionella) goes, no positive is lost. The 11 Mtb sRNAs missed by all
+profiles are not threshold losses (`min_rpm` 2 recovers none): 4 have too few reads (ASdes,
+MTS0858, AS1890, mcr16 ≤ 59 reads over 2 libraries), AS1726 has none, and 6 fall in
+**background** loci (F6, mcr10, MTS1082, ASpks, mcr7 with 208 reads, MTS2975): long sRNAs
+(mcr7 350 nt) degraded into scattered fragments with no dominant 5' end. Peak calling, not the
+filters, limits recall here; a "long transcript" locus class is a possible extension.
 
 Decisions:
 - **`min_rpm_genome` off in both profiles.** In no study did it remove a false positive (they all

@@ -673,6 +673,8 @@ are the positive controls.
 | PRJNA248348 (Furuse 2014) | HeLa cells, *Chlamydia trachomatis* (L2b reference) | 2 (total, Ago-IP) + 2 (THP-1 cells with *M. tuberculosis*), 11 sRNAs (Albrecht 2010) | `--study chlamydia` |
 | PRJNA395356 (Feng 2018) | *Myzus persicae* bacteriocytes vs gut, *Buchnera* G002 | 3 + 3 | `--study buchnera_myzus` |
 | PRJNA321074 (Li 2018) | *Bemisia tabaci* Q, *Cardinium* | 2 + 2 | `--study cardinium` |
+| PRJNA248348 (Furuse 2014) | THP-1 cells, *M. tuberculosis* H37Rv | 2 + 2 (HeLa with *Chlamydia*), 19 RefSeq sRNAs | `--study mtb` |
+| PRJNA248348 (Furuse 2014) | RAW 264.7 cells, *Legionella pneumophila* Philadelphia-1 | 2 + 4 (RAW with *M. marinum* / *M. smegmatis*) | `--study legionella` |
 
 `wolbachia_walbb/05_variants.py` re-runs only `discover` with other settings on a finished
 benchmark (minutes), `06_summary.py` tabulates candidates, false positives, structural share and
@@ -687,10 +689,15 @@ same genome. Candidates / passing loci in the uninfected line / known small RNAs
 | wMel ovaries (0.03%) | 0 / 0 / – | 0 / 0 / – | 1 / 0 / – |
 | wTtru spider mite (0.35%) | 22 / **2** / 1 of ~9 loci | 14 / 0 / 1 | 33 / 0 / 2 |
 | *C. trachomatis* HeLa (23%) | 1,837 / **14** / 8 of 11 | 1,628 / 0 / 8 | 3,566 / 0 / 11 |
+| *M. tuberculosis* THP-1 (5.9%) | 2,536 / **11** / 8 of 19 | 2,425 / 0 / 8 | 6,107 / 0 / 8 |
+| *L. pneumophila* RAW (2.7%) | 625 / **3** / – | 530 / 0 / – | 1,614 / 0 / – |
 
 The host reads stay off the symbiont (no misassignment in any study). The false positives are reads
 of another bacterium: the mite's on conserved sequence (0% reads without mismatches), the
-*M. tuberculosis* rRNA reads on the *Chlamydia* rRNA operons (both strands). Two negative controls
+*M. tuberculosis* rRNA reads on the *Chlamydia* rRNA operons (both strands), and the reverse
+(*Chlamydia* / *Mycobacterium* reads on Mtb and *Legionella* rRNA and conserved CDS). The 11 Mtb
+sRNAs no profile finds have too few reads or lie in background loci (long sRNAs such as mcr7
+fragmented without a dominant 5' end). Two negative controls
 are not clean and measure no false positive: the *M. persicae* gut has 0.5% *Buchnera* reads
 (bacteriocyte contamination; 73 of its 76 passing loci are small RNAs of the bacteriocytes), and
 the "uninfected" whiteflies have as many *Cardinium* reads as the infected ones.

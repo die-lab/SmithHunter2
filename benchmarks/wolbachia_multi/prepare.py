@@ -53,6 +53,11 @@ BTAB_Q = {"url": "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/003/994/315/GCA_0
                  "GCA_003994315.1_CAAS_Bemtab1.0_genomic.fna.gz",   # isolate CAASIVF2012BtQ, no mito
           "mito": "KU663131.1", "mito_separate": True}
 CTR_L2B = {"accession": "NC_010280.1,NC_010285.1"}   # C. trachomatis L2b/UCH-1 chromosome + pL2
+MTB_H37RV = {"accession": "NC_000962.3"}
+MMUS = {"url": "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/635/GCF_000001635.27_GRCm39/"
+               "GCF_000001635.27_GRCm39_genomic.fna.gz",
+        "mito": "NC_005089.1"}
+LPN_PHILA = {"accession": "NC_002942.5"}   # L. pneumophila Philadelphia 1
 # Cardinium of B. tabaci (China, CAAS): 3 scaffolds (993,648 / 2,448 / 713 bp): linear
 CARD_BTAB = {"assembly": "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/004/300/865/"
                          "GCF_004300865.1_CAAS_CanCar1.0/GCF_004300865.1_CAAS_CanCar1.0", "linear": True}
@@ -110,6 +115,21 @@ STUDIES = {
         "groups": {"infected": ("experiment_title", r"Chlamydia trachomatis in HeLa"),
                    "tet": ("experiment_title", r"Mycobacterium tuberculosis in THP-1")},
         "adapter": "", "focus_name": "chlamydia",
+    },
+    "mtb": {   # Furuse et al. 2014 (as chlamydia, roles swapped): `infected` M. tuberculosis in
+                # THP-1 (total + RISC), `tet` C. trachomatis in HeLa (human cells without Mtb).
+                # Known sRNAs: the 19 RefSeq ncRNAs of H37Rv (positive_mtb.tsv).
+        "accession": "PRJNA248348", "host": HSAP, "focus": MTB_H37RV,
+        "groups": {"infected": ("experiment_title", r"Mycobacterium tuberculosis in THP-1"),
+                   "tet": ("experiment_title", r"Chlamydia trachomatis in HeLa")},
+        "adapter": "", "focus_name": "mtb",
+    },
+    "legionella": {   # Furuse et al. 2014: `infected` L. pneumophila in mouse RAW264.7 macrophages
+                # (total + RISC), `tet` RAW264.7 with M. marinum or M. smegmatis (no Legionella).
+        "accession": "PRJNA248348", "host": MMUS, "focus": LPN_PHILA,
+        "groups": {"infected": ("experiment_title", r"Legionella pneumophila in RAW"),
+                   "tet": ("experiment_title", r"Mycobacterium (marinum|smegmatis) in RAW")},
+        "adapter": "", "focus_name": "legionella",
     },
     "cardinium": {   # Li et al. 2018 Front Physiol (PMID 30483149): B. tabaci Q, Cardinium-infected
                 # vs uninfected of the same genetic background, 2 + 2 libraries. No known Cardinium
