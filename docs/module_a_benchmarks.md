@@ -269,5 +269,10 @@ focus-genome reads only). Passing loci by enrichment:
 Decision: off by default (needs a control group, dataset-specific); recommended
 `min_enrichment: 2` whenever symbiont-free libraries are in the run.
 
+In a merged run the passing loci at defaults are almost those of the infected line alone (JW18,
+Aag2, wAlbB, mite identical; Mtb 2,534 vs 2,536, Chlamydia 1,836 vs 1,837, Legionella 631 vs
+625): peaks are called on the reads of all libraries, so the controls' reads can move a peak
+boundary or split a weak block differently.
+
 Regression fixtures `tests/data/mtb_{infected,tet}` pin the Mtb results (8 of 19 with both
 profiles, the false positives of the negative and their removal, mcr7 / F6 as transcript loci).
