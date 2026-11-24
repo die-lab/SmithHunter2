@@ -19,6 +19,9 @@ DISCOVER_SETTINGS = [
     ("--satellite-distance", "loci", "satellite_distance", 10),
     ("--satellite-fraction", "loci", "satellite_fraction", 0.1),
     ("--cluster-gap", "loci", "cluster_gap", 0),
+    ("--transcript-gap", "loci", "transcript_gap", 0),
+    ("--control-group", "loci", "control_group", None),
+    ("--min-enrichment", "loci", "min_enrichment", 0),
     ("--exclude-structural", "loci", "exclude_structural", "none"),
     ("--min-exact-fraction", "loci", "min_exact_fraction", 0),
     ("--n-thre", "ends", "n_thre", 0.5),
@@ -51,7 +54,8 @@ def effective(config: dict) -> dict[str, object]:
 def discover_args(config: dict, samples_table: str | None = None) -> list[str]:
     """Arguments of `smithhunter discover` for these settings (inputs and outputs excluded).
 
-    samples_table: the samples.tsv with a `group` column, needed with min_samples_scope group.
+    samples_table: the samples.tsv with a `group` column, needed with min_samples_scope group
+    and with control_group.
     """
     used = effective(config)
     args: list[str] = []
@@ -68,7 +72,16 @@ def discover_args(config: dict, samples_table: str | None = None) -> list[str]:
     if scope not in SCOPES:
         raise ValueError("config: loci.min_samples_scope must be all or group")
     if scope == "group":
+        args += ["--min-samples-scope", "group"]
+    if scope == "group" or used["loci.control_group"]:
         if not samples_table:
-            raise ValueError("config: loci.min_samples_scope group needs the samples table")
-        args += ["--min-samples-scope", "group", "--samples-table", str(samples_table)]
+            raise ValueError("config: loci.min_samples_scope group and loci.control_group need "
+                             "the samples table")
+        args += ["--samples-table", str(samples_table)]
     return args
+
+
+def needs_groups(config: dict) -> bool:
+    """True when discover reads the `group` column of the samples table."""
+    used = effective(config)
+    return used["loci.min_samples_scope"] == "group" or bool(used["loci.control_group"])

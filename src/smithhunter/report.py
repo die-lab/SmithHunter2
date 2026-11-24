@@ -62,6 +62,8 @@ def funnel(samples: list[str], fastp_jsons: list[str], libraries_path: str, summ
             for i, s in enumerate(samples):
                 values["mapped"][i] += float(r[s])
     for r in read_tsv(loci_path):
+        if r["locus_type"] == "transcript":   # overlaps the other loci (report only)
+            continue
         for i, s in enumerate(samples):
             count = float(r[f"count_{s}"])
             values["focus"][i] += count

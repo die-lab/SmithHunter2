@@ -7,8 +7,14 @@
 # in a high-load study (JW18, Wolbachia 20%) one locus passes in the cured line (cross-talk of the
 # most abundant Wolbachia small RNA), and candidates double or triple (JW18 3,694; Chlamydia 3,566).
 # With pools that differ (sexes, tissues) add loci.min_samples_scope: group and a `group` column.
+# transcript_gap 10 adds report-only `transcript` loci (section 9): long or fragmented small RNAs
+# with no dominant 5' end (Mtb mcr7 and F6, Chlamydia ihtA and ctrR5, WsnRNA-46 in Aag2 cells,
+# WsnRNA-744 in the mite) show up as expressed transcript loci; never candidates.
+# With symbiont-free samples in the same run, add loci.control_group (their `group`) and
+# loci.min_enrichment: 2.
 loci:
   exclude_structural: any
   min_exact_fraction: 0.5
   min_rpm_genome: 0
   min_rpm: 2
+  transcript_gap: 10

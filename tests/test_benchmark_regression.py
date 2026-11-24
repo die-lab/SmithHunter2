@@ -133,3 +133,43 @@ def test_chlamydia_negative_control_rrna_reads_of_another_bacterium(tmp_path, mo
     sense = run("chlamydia_tet", tmp_path, monkeypatch, PRECISE, {"loci": {"exclude_structural": "sense"}})
     assert {r["structural"] for r in sense if r["pass"] == "1"} == {"antisense"}
     assert not [r for r in run("chlamydia_tet", tmp_path, monkeypatch, PRECISE) if r["pass"] == "1"]
+
+
+# M. tuberculosis H37Rv in THP-1 vs C. trachomatis in HeLa (Furuse 2014); 19 RefSeq sRNAs
+# (benchmarks/wolbachia_multi/positive_mtb.tsv)
+def mtb_known() -> dict[str, tuple]:
+    path = REPO / "benchmarks/wolbachia_multi/positive_mtb.tsv"
+    with open(path, newline="") as fh:
+        return {r["name"]: (r["contig"], int(r["start"]), int(r["end"]), r["strand"])
+                for r in csv.DictReader(fh, delimiter="\t")}
+
+
+MTB_PRECISE = {"B55", "mcr3", "mcr11", "mcr15", "G2", "MTS1338", "B11", "MTS2823"}
+
+
+def test_mtb_known_srnas_with_the_profiles(tmp_path, monkeypatch):
+    known = mtb_known()
+    for profile in (PRECISE, SENSITIVE):
+        rows = run("mtb_infected", tmp_path, monkeypatch, profile)
+        assert {n for n, w in known.items() if passing(rows, w)} == MTB_PRECISE
+
+
+def test_mtb_negative_control_false_positives_go_with_the_precise_profile(tmp_path, monkeypatch):
+    # Chlamydia / HeLa reads on the Mtb rRNA operon (sense) and on conserved CDS (0% exact)
+    hits = [r for r in run("mtb_tet", tmp_path, monkeypatch) if r["pass"] == "1"]
+    assert {r["annotation_class"] for r in hits} >= {"rRNA", "CDS"}
+    assert all(r["structural"] or float(r["exact_fraction"]) < 0.5 for r in hits)
+    assert not [r for r in run("mtb_tet", tmp_path, monkeypatch, PRECISE) if r["pass"] == "1"]
+
+
+def test_mtb_long_srnas_only_as_transcript_loci(tmp_path, monkeypatch):
+    # mcr7 (350 nt) and F6 are split into weak peaks and background fragments: no candidate,
+    # but an expressed transcript locus with loci.transcript_gap (report only)
+    known = mtb_known()
+    rows = run("mtb_infected", tmp_path, monkeypatch, PRECISE, {"loci": {"transcript_gap": 10}})
+    for name in ("mcr7", "F6"):
+        contig, start, end, strand = known[name]
+        assert not passing(rows, known[name])
+        tx = [r for r in rows if r["locus_type"] == "transcript" and r["strand"] == strand
+              and int(r["start"]) <= end and int(r["end"]) >= start]
+        assert any(r["expression_pass"] == "1" for r in tx) and not any(r["pass"] == "1" for r in tx)

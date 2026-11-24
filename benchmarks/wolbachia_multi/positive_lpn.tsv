@@ -1,0 +1,12 @@
+name	contig	start	end	strand	source
+RsmY	NC_002942.5	7090	7168	-	Faucher & Shuman 2011 Table 1 (Rasis & Segal 2009; Sahr 2009); between lpg0004 and lpg0005, 3' end by RACE
+RsmZ	NC_002942.5	1892592	1892720	-	Faucher & Shuman 2011 Table 1 (Hovel-Miner 2009; Rasis & Segal 2009); between lpg1697 and lpg1698
+LprA	NC_002942.5	2013510	2013775	-	Faucher 2010 Table 1 (Northern); ends from Northern size
+LprB	NC_002942.5	2022555	2022672	+	Faucher 2010 Table 1 (Northern); ends from Northern size
+LprC	NC_002942.5	978559	978676	+	Faucher 2010 Table 1 (Northern, 5' RACE)
+LprD	NC_002942.5	3321516	3321618	-	Faucher 2010 Table 1 (Northern, 5' RACE)
+lpr0003	NC_002942.5	45316	45539	+	Weissenmayer 2011 Table S7 (Northern; RNA-seq boundaries); antisense to lpg0038
+lpr0010	NC_002942.5	341341	341434	+	Weissenmayer 2011 Table S7 (Northern; RNA-seq boundaries)
+lpr0017	NC_002942.5	539616	539866	+	Weissenmayer 2011 Table S7 (Northern; RNA-seq boundaries); antisense to lpg0499/lpg0500
+lpr0049	NC_002942.5	2389117	2389440	-	Weissenmayer 2011 Table S7 (Northern; RNA-seq boundaries); antisense to lpg2142
+lpr0069	NC_002942.5	3303401	3303482	-	Weissenmayer 2011 Table S7 (Northern, probe may cross-hybridise with Family A copies)

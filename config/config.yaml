@@ -67,6 +67,10 @@ loci:
   satellite_distance: 10 # a weak peak this close to a stronger one ...
   satellite_fraction: 0.1  # ... with less than this share of its reads joins it
   cluster_gap: 0         # peak loci overlapping or this close share a cluster_id (report only)
+  transcript_gap: 0      # > 0: background fragments this close form 'transcript' loci (report only)
+  control_group: null    # group (samples table) of symbiont-free controls: expression judged on
+                         # the other samples, `enrichment` reported
+  min_enrichment: 0      # with control_group: mean RPM others / controls (+1 read per library)
   multimap: fractional   # fractional | unique (within one genome)
   min_rpm: 5             # reads per million (library total) in one sample
   min_count: 5           # and at least this many reads in that sample

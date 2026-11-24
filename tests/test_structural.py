@@ -202,6 +202,46 @@ def test_min_samples_scope_group(tmp_path):
         discover(*args, min_samples_scope="sex")
 
 
+def test_control_group_enrichment(tmp_path):
+    alignments, counts, libs, genomes, contigs = inputs(tmp_path)
+    text = open(counts).read().replace("u3\tGGGGGGGGGGGGGGGGGGGG\t20\t60\t70",
+                                       "u3\tGGGGGGGGGGGGGGGGGGGG\t20\t60\t0")   # not in the control
+    open(counts, "w").write(text)
+    args = (alignments, counts, libs, genomes, contigs)
+    groups = {"s1": "infected", "s2": "tet"}
+    _, rows, _ = discover(*args, min_rpm=5)
+    assert [r["enrichment"] for r in rows] == ["", ""] and [r["pass"] for r in rows] == [1, 1]
+    _, rows, _ = discover(*args, min_rpm=5, groups=groups, control_group="tet")
+    assert rows[0]["enrichment"] == pytest.approx(0.99, abs=0.01)    # as strong in the control
+    assert rows[1]["enrichment"] == pytest.approx((61 / 101) / (1 / 100), rel=1e-3)   # +1 read
+    assert [r["pass"] for r in rows] == [1, 1]                       # report only by default
+    _, rows, _ = discover(*args, min_rpm=5, groups=groups, control_group="tet", min_enrichment=2)
+    assert [r["enrichment_pass"] for r in rows] == [0, 1] and [r["pass"] for r in rows] == [0, 1]
+    # expression is judged on the infected sample only: a locus of the control alone fails
+    _, rows, _ = discover(*args, min_rpm=5, groups={"s1": "tet", "s2": "infected"},
+                          control_group="tet")
+    assert [r["expression_pass"] for r in rows] == [1, 0]
+    with pytest.raises(ValueError):
+        discover(*args, groups=groups, control_group="ctrl")         # no such group
+    with pytest.raises(ValueError):
+        discover(*args, control_group="tet")                         # no groups
+    with pytest.raises(ValueError):
+        discover(*args, groups={"s1": "tet", "s2": "tet"}, control_group="tet")
+
+
+def test_control_group_args():
+    from smithhunter.settings import discover_args, needs_groups
+    cfg = {"loci": {"control_group": "tet", "min_enrichment": 4}}
+    with pytest.raises(ValueError):
+        discover_args(cfg)
+    args = discover_args(cfg, "samples.tsv")
+    assert " ".join(args).count("--control-group tet") == 1 and "--min-enrichment" in args
+    assert args[-2:] == ["--samples-table", "samples.tsv"] and "--min-samples-scope" not in args
+    assert needs_groups(cfg) and not needs_groups({})
+    both = discover_args({"loci": {"control_group": "tet", "min_samples_scope": "group"}}, "s.tsv")
+    assert both.count("--samples-table") == 1
+
+
 def test_read_groups(tmp_path):
     from smithhunter.cli import read_groups
     p = tmp_path / "samples.tsv"

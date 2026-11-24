@@ -170,6 +170,9 @@ Other settings, with their defaults:
 | `loci.background_flank` | 50 | bases on each side used to estimate the background |
 | `loci.satellite_distance` / `satellite_fraction` | 10 / 0.1 | a weaker peak this close, with less than this share of reads, joins the stronger one |
 | `loci.cluster_gap` | 0 | peak loci overlapping or at most this far apart share a `cluster_id` (report only, the filters ignore it) |
+| `loci.transcript_gap` | 0 | > 0: chains of loci of one strand at most this far apart are added as `transcript` loci (long or fragmented small RNAs; report only) |
+| `loci.control_group` | null | `group` of the symbiont-free libraries: expression judged on the others, `enrichment` reported |
+| `loci.min_enrichment` | 0 | with `control_group`: minimum `enrichment` for `pass` (2 recommended) |
 | `loci.multimap` | `fractional` | `fractional` or `unique` within one genome |
 | `loci.min_rpm` / `min_count` | 5 / 5 | per-sample thresholds (reads per million and raw reads) |
 | `loci.min_rpm_genome` | 0 (off) | also reads per million reads assigned to the locus' genome in that sample: the threshold then follows the load of a symbiont (with library RPM alone a symbiont holding 20% of the reads passes thousands of loci) |
@@ -220,7 +223,7 @@ Main columns of `loci.tsv`:
 | column | meaning |
 |---|---|
 | `start`, `end`, `strand`, `span` | 1-based locus coordinates; `wraps_origin` = 1 if it crosses the origin |
-| `locus_type` | `peak` (candidate small RNA) or `background` (reads with no 5' peak; never passes) |
+| `locus_type` | `peak` (candidate small RNA), `background` (reads with no 5' peak; never passes) or `transcript` (with `loci.transcript_gap`: a chain of nearby loci of one strand quantified as a whole; overlaps them, report only) |
 | `rep_sequence`, `rep_start`, `rep_end` | the most abundant read of the locus and its position |
 | `total_count`, `count_<sample>` | reads (multi-mapping reads count fractionally) |
 | `background_count` | reads expected from the local background in the peak window |
@@ -231,7 +234,8 @@ Main columns of `loci.tsv`:
 | `annotation_class`, `annotation_orientation` | most specific overlapping GFF3 feature and its strand relation |
 | `structural` | `sense` / `antisense` when the locus overlaps a structural RNA (by GFF type, or by gene name / product for ncRNA, exon and gene features), empty otherwise |
 | `exact_fraction` | share of the reads aligned without mismatches |
-| `expression_pass`, `ends_pass`, `structural_pass`, `exact_pass`, `pass` | filter results |
+| `enrichment` | with `loci.control_group`: mean RPM of the other libraries / mean RPM of the controls (+1 read per library); empty otherwise |
+| `expression_pass`, `ends_pass`, `structural_pass`, `exact_pass`, `enrichment_pass`, `pass` | filter results |
 | `cluster_id`, `cluster_size`, `cluster_count` | peak loci of one strand that overlap (or lie within `loci.cluster_gap` bases) share a cluster, named after its most abundant locus; size and reads of the cluster. Report only: ragged 5' isoforms of one small RNA show up as several loci of one cluster. Empty for background loci |
 
 ### Plots and QC report
@@ -674,7 +678,7 @@ are the positive controls.
 | PRJNA395356 (Feng 2018) | *Myzus persicae* bacteriocytes vs gut, *Buchnera* G002 | 3 + 3 | `--study buchnera_myzus` |
 | PRJNA321074 (Li 2018) | *Bemisia tabaci* Q, *Cardinium* | 2 + 2 | `--study cardinium` |
 | PRJNA248348 (Furuse 2014) | THP-1 cells, *M. tuberculosis* H37Rv | 2 + 2 (HeLa with *Chlamydia*), 19 RefSeq sRNAs | `--study mtb` |
-| PRJNA248348 (Furuse 2014) | RAW 264.7 cells, *Legionella pneumophila* Philadelphia-1 | 2 + 4 (RAW with *M. marinum* / *M. smegmatis*) | `--study legionella` |
+| PRJNA248348 (Furuse 2014) | RAW 264.7 cells, *Legionella pneumophila* Philadelphia-1 | 2 + 4 (RAW with *M. marinum* / *M. smegmatis*), 11 sRNAs (Faucher 2010, Weissenmayer 2011) | `--study legionella` |
 
 `wolbachia_walbb/05_variants.py` re-runs only `discover` with other settings on a finished
 benchmark (minutes), `06_summary.py` tabulates candidates, false positives, structural share and
@@ -690,7 +694,7 @@ same genome. Candidates / passing loci in the uninfected line / known small RNAs
 | wTtru spider mite (0.35%) | 22 / **2** / 1 of ~9 loci | 14 / 0 / 1 | 33 / 0 / 2 |
 | *C. trachomatis* HeLa (23%) | 1,837 / **14** / 8 of 11 | 1,628 / 0 / 8 | 3,566 / 0 / 11 |
 | *M. tuberculosis* THP-1 (5.9%) | 2,536 / **11** / 8 of 19 | 2,425 / 0 / 8 | 6,107 / 0 / 8 |
-| *L. pneumophila* RAW (2.7%) | 625 / **3** / – | 530 / 0 / – | 1,614 / 0 / – |
+| *L. pneumophila* RAW (2.7%) | 625 / **3** / 5 of 11 | 530 / 0 / 5 | 1,614 / 0 / 5 |
 
 The host reads stay off the symbiont (no misassignment in any study). The false positives are reads
 of another bacterium: the mite's on conserved sequence (0% reads without mismatches), the
@@ -726,6 +730,19 @@ With pools that differ (sexes, tissues, stages) add a `group` column to `samples
 its own group instead of n − 1 of all (mite, 3 female + 3 male pools, no false positive in any
 case: `symbiont_precise` 14 candidates and 1 WsnRNA locus, with `group` 37 and 2, adding the
 male-biased WsnRNA-744; `symbiont_sensitive` with `group` 108 and 2).
+
+With symbiont-free libraries (tetracycline-cured, uninfected line) in the same run, give them
+their own `group` and set `loci.control_group` to it and `loci.min_enrichment: 2`: expression is
+judged on the other libraries, and a locus must be at least twice as strong (RPM, +1 read per
+library) as in the controls. On the merged infected + control runs of eight studies, real
+symbiont loci had enrichment ≥ 10; the loci below 2 were the rRNA / tRNA false positives of the
+negative controls (removed without the annotation, no known small RNA lost), and every locus of
+the Cardinium study, whose "uninfected" line carries Cardinium.
+
+`symbiont_sensitive` also sets `loci.transcript_gap: 10`: report-only `transcript` loci for long
+or fragmented small RNAs with no dominant 5' end (Mtb mcr7 and F6, Chlamydia ihtA and ctrR5,
+WsnRNA-46 in Aag2 cells, WsnRNA-744 in the mite are found only this way). They are a list to
+inspect, mostly mRNA fragments, never candidates. Details: `docs/module_a_benchmarks.md`, section 9.
 
 ## Testing
 

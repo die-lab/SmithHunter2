@@ -98,7 +98,8 @@ def cmd_discover(args):
         five_jitter=args.five_jitter, exclude_structural=args.exclude_structural,
         min_rpm_genome=args.min_rpm_genome, min_exact_fraction=args.min_exact_fraction,
         groups=read_groups(args.samples_table), min_samples_scope=args.min_samples_scope,
-        cluster_gap=args.cluster_gap)
+        cluster_gap=args.cluster_gap, transcript_gap=args.transcript_gap,
+        control_group=args.control_group, min_enrichment=args.min_enrichment)
     write_tsv(args.loci, rows, locus_columns(samples))
     write_tsv(args.reads, reads, READ_COLUMNS)
     write_fasta(args.fasta, rows)
@@ -379,7 +380,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="group: min_samples within at least one group of --samples-table "
                         "(default group size - 1), for small RNAs of one sex / tissue / stage")
     s.add_argument("--samples-table", default=None,
-                   help="samples.tsv with a `group` column (needed with --min-samples-scope group)")
+                   help="samples.tsv with a `group` column (needed with --min-samples-scope group "
+                        "and --control-group)")
     s.add_argument("--no-peaks", action="store_true",
                    help="loci are whole blocks of overlapping reads (no 5' peak splitting)")
     s.add_argument("--peak-window", type=int, default=2)
@@ -390,6 +392,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--cluster-gap", type=int, default=0,
                    help="peak loci overlapping or at most this far apart share a cluster_id "
                         "(report only, the filters ignore it)")
+    s.add_argument("--transcript-gap", type=int, default=0,
+                   help="> 0: background loci of one strand at most this far apart are merged "
+                        "into 'transcript' loci (long or degraded small RNAs; report only, "
+                        "never candidates)")
+    s.add_argument("--control-group", default=None,
+                   help="group of --samples-table holding the control (symbiont-free) samples: "
+                        "expression is judged on the other samples, and enrichment is reported")
+    s.add_argument("--min-enrichment", type=float, default=0,
+                   help="with --control-group: mean RPM of the others / mean RPM of the controls "
+                        "(+1 read per library) at least this (0: report only)")
     s.add_argument("--n-thre", type=float, default=0.5)
     s.add_argument("--penalty", type=float, default=0.1)
     s.add_argument("--min-five", type=float, default=0.5, help="five-filter score: score > this")

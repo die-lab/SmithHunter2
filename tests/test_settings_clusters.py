@@ -122,3 +122,53 @@ def test_cluster_columns_in_discover(tmp_path):
     assert a["cluster_id"] == b["cluster_id"] == a["locus_id"]   # the stronger isoform leads
     assert a["cluster_size"] == b["cluster_size"] == 2 and a["cluster_count"] == 200
     assert c["cluster_id"] == c["locus_id"] and c["cluster_size"] == 1
+
+
+def test_merge_transcripts_joins_close_background_fragments_only():
+    from smithhunter.loci import Member, merge_transcripts
+    def bg(s, e, strand="+"):
+        return Locus("g", "c", strand, s, e, [Member(f"r{s}", s, e, 1.0, 3.0)], kind="background")
+    loci = [bg(0, 20), bg(25, 45), bg(50, 70), bg(200, 220), bg(30, 50, "-"),
+            _peak(100, 120), _peak(60, 80)]
+    assert merge_transcripts(loci, 0) is loci                     # off by default
+    out = merge_transcripts(loci, 10)
+    tx = [l for l in out if l.kind == "transcript"]
+    # 0-20, 25-45, 50-70 (background) and the peak at 60-80 chain; 100-120 is 20 bases away
+    assert len(tx) == 1 and (tx[0].start, tx[0].end) == (0, 80) and len(tx[0].members) == 3
+    assert out[:len(loci)] == loci                                # every locus is kept
+    assert len(out) == len(loci) + 1
+
+
+def test_transcript_loci_are_quantified_but_never_candidates(tmp_path):
+    """A long RNA cut into fragments with scattered 5' ends: one transcript locus, expressed."""
+    from smithhunter.loci import discover
+    import gzip
+    d = tmp_path
+    (d / "genomes.tsv").write_text("name\tfasta\trole\tcircular\tannotation\tmin_length\tmax_length\n"
+                                   "g\tg.fa\tfocus\t0\t\t18\t35\n")
+    (d / "contigs.tsv").write_text("ref\tgenome\tcontig\tlength\tcircular\ng|c\tg\tc\t10000\t0\n")
+    (d / "libraries.tsv").write_text("sample\treads_in\treads_kept\ns1\t100000\t100000\n")
+    counts = ["read_id\tsequence\tlength\ts1"]
+    aln = ["read_id\tgenome\tcontig\tstart\tend\tstrand\tweight\tmismatches"]
+    # 3 fragments 8 nt apart; each: 20 reads of 20 nt starting every 2 nt (no 5' peak)
+    i = 0
+    for frag in range(3):
+        for k in range(20):
+            start = 1000 + frag * 66 + 2 * k
+            counts.append(f"f{i}\t{'A' * 20}\t20\t1")
+            aln.append(f"f{i}\tg\tc\t{start}\t{start + 20}\t+\t1\t0")
+            i += 1
+    with gzip.open(d / "counts.tsv.gz", "wt") as fh:
+        fh.write("\n".join(counts) + "\n")
+    with gzip.open(d / "aln.tsv.gz", "wt") as fh:
+        fh.write("\n".join(aln) + "\n")
+    args = [str(d / "aln.tsv.gz"), str(d / "counts.tsv.gz"), str(d / "libraries.tsv"),
+            str(d / "genomes.tsv"), str(d / "contigs.tsv")]
+    _, rows, _ = discover(*args, min_rpm=500, min_samples=1)
+    assert {r["locus_type"] for r in rows} == {"background"} and len(rows) == 3
+    assert not any(r["expression_pass"] for r in rows)          # 20 reads = 200 RPM each
+    _, rows, _ = discover(*args, min_rpm=500, min_samples=1, transcript_gap=10)
+    tx = [r for r in rows if r["locus_type"] == "transcript"]
+    assert len(rows) == 4 and len(tx) == 1
+    assert tx[0]["total_count"] == 60 and tx[0]["expression_pass"] == 1
+    assert tx[0]["pass"] == 0 and tx[0]["cluster_id"] == ""

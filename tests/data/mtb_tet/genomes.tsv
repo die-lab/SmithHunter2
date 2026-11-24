@@ -1,0 +1,2 @@
+name	fasta	role	circular	annotation	min_length	max_length	targets
+mtb	-	focus	1	annotation.gff3	18	35	none

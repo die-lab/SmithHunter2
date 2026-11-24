@@ -1,14 +1,14 @@
 import shlex
 
 sys.path.insert(0, str(SRC))
-from smithhunter.settings import discover_args  # noqa: E402  (one list of settings, see settings.py)
+from smithhunter.settings import discover_args, needs_groups  # noqa: E402  (see settings.py)
 
 
 def discover_settings():
-    if LOCI.get("min_samples_scope", "all") == "group":
+    if needs_groups(config):
         if not SAMPLE_GROUPS or not all(SAMPLE_GROUPS.values()):
-            raise ValueError("config: loci.min_samples_scope group needs a `group` value for "
-                             "every sample in the samples table")
+            raise ValueError("config: loci.min_samples_scope group and loci.control_group need "
+                             "a `group` value for every sample in the samples table")
     return shlex.join(discover_args(config, config["samples"]))
 
 
@@ -20,8 +20,8 @@ rule discover:
         genomes=OUT / "reference/genomes.tsv",
         contigs=OUT / "reference/contigs.tsv",
         annotations=[g["annotation"] for g in GENOMES.values() if g.get("annotation")],
-        # the group column is read with min_samples_scope group: edits must re-run discover
-        samples=[config["samples"]] if LOCI.get("min_samples_scope", "all") == "group" else [],
+        # the group column is read (min_samples_scope group, control_group): edits re-run discover
+        samples=[config["samples"]] if needs_groups(config) else [],
     output:
         loci=OUT / "discovery/loci.tsv",
         reads=OUT / "discovery/locus_reads.tsv.gz",

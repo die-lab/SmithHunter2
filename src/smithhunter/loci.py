@@ -211,6 +211,41 @@ def peak_clusters(loci: list[Locus], gap: int = 0) -> list[int | None]:
     return out
 
 
+def merge_transcripts(loci: list[Locus], gap: int) -> list[Locus]:
+    """Add ``transcript`` loci: chains of loci (peak and background) of one contig and strand at
+    most ``gap`` bases apart, quantified as a whole.
+
+    A long or degraded small RNA (Mtb mcr7, 350 nt) has no dominant 5' end: its reads end up in
+    many weak peaks and background fragments, each below the expression threshold, while the
+    whole transcript is above it. Chains of two or more loci give one transcript locus; the
+    loci themselves are kept, so transcript loci overlap them and share their reads. Report only
+    (never candidates; most of them are mRNA fragments, and a chain can run into the
+    neighbouring genes). Loci crossing the origin are not chained.
+    """
+    if gap <= 0:
+        return loci
+    by: dict[tuple, list[Locus]] = defaultdict(list)
+    for l in loci:
+        if not l.wraps:
+            by[(l.genome, l.contig, l.strand)].append(l)
+    out = list(loci)
+    for runs in by.values():
+        runs.sort(key=lambda l: (l.start, l.end))
+        cur: list[Locus] = []
+        end = 0
+        for l in runs + [None]:
+            if l is not None and cur and l.start <= end + gap:
+                cur.append(l)
+                end = max(end, l.end)
+                continue
+            if len(cur) > 1:
+                first = cur[0]
+                out.append(Locus(first.genome, first.contig, first.strand, first.start, end,
+                                 [m for c in cur for m in c.members], kind="transcript"))
+            cur, end = ([l], l.end) if l is not None else ([], 0)
+    return out
+
+
 def load_counts(path: str):
     counts: dict[str, tuple[str, list[float]]] = {}
     with open_text(path) as fh:
@@ -228,11 +263,19 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
              background_flank=50, satellite_distance=10, satellite_fraction=0.1,
              min_isolation=0.5, five_filter="dominant", min_five_fraction=0.5, five_jitter=1,
              exclude_structural="none", min_rpm_genome=0.0, min_exact_fraction=0.0,
-             groups=None, min_samples_scope="all", cluster_gap=0):
+             groups=None, min_samples_scope="all", cluster_gap=0, transcript_gap=0,
+             control_group=None, min_enrichment=0.0):
     """groups: sample -> group (e.g. sex, tissue). With min_samples_scope "group" a locus passes
     the expression filter when it passes in min_samples samples of at least one group (default
     group size - 1, at least 1), so a small RNA of one condition is not rejected by the others.
-    cluster_gap: see peak_clusters (report only)."""
+    cluster_gap: see peak_clusters (report only). transcript_gap: see merge_transcripts (report
+    only).
+
+    control_group: the group of control samples (symbiont-free, e.g. tetracycline-treated, or
+    another tissue). Expression is then judged on the other samples only, and ``enrichment`` is
+    the mean RPM in the other samples over the mean RPM in the controls, one read added to every
+    library; with min_enrichment > 0 a locus must reach it. A locus as strong in the controls as in the infected samples is host
+    sequence, contamination or cross-talk rather than a symbiont small RNA."""
     if five_filter not in FIVE_FILTERS:
         raise ValueError(f"five_filter must be one of {FIVE_FILTERS}")
     if exclude_structural not in STRUCTURAL_FILTERS:
@@ -245,19 +288,28 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
     contigs = {(c["genome"], c["contig"]): c for c in read_tsv(contigs_path)}
     group_need: dict[str, int] = {}
     sample_group: list[str] = []
-    if min_samples_scope == "group":
+    if min_samples_scope == "group" or control_group:
+        what = "control_group" if control_group else "min_samples_scope group"
         missing = [s for s in samples if not (groups or {}).get(s)]
         if missing:
-            raise ValueError(f"min_samples_scope group: no group for samples {missing}")
+            raise ValueError(f"{what}: no group for samples {missing}")
         sample_group = [groups[s] for s in samples]
-        for g in sorted(set(sample_group)):
+    is_control = [bool(control_group) and g == control_group for g in sample_group] \
+        or [False] * len(samples)
+    if control_group:
+        if not any(is_control):
+            raise ValueError(f"control_group {control_group!r}: no sample in this group")
+        if all(is_control):
+            raise ValueError(f"control_group {control_group!r}: every sample is a control")
+    if min_samples_scope == "group":
+        for g in sorted(set(sample_group) - {control_group}):
             size = sample_group.count(g)
             group_need[g] = min(size, min_samples) if min_samples is not None else max(1, size - 1)
             if size < 2:
                 print(f"warning: group {g!r} has {size} sample: one sample is enough there "
                       "(check the group column)", file=sys.stderr)
     if min_samples is None:
-        min_samples = max(1, len(samples) - 1)
+        min_samples = max(1, len(samples) - sum(is_control) - 1)
 
     grouped: dict[tuple, list[Member]] = defaultdict(list)
     genome_totals: dict[str, list[float]] = defaultdict(lambda: [0.0] * len(samples))
@@ -291,6 +343,7 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
             for locus in split_peaks(block, peak_window, peak_pvalue, background_flank, merge_gap,
                                      satellite_distance, satellite_fraction):
                 loci.append(fold_origin(locus, length, circular))
+    loci = merge_transcripts(loci, transcript_gap)
     loci.sort(key=lambda l: (l.genome, l.contig, l.start, l.strand))
     clusters = peak_clusters(loci, cluster_gap)
 
@@ -344,7 +397,18 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
             expr_pass = any(sum(p for p, gg in zip(passed, sample_group) if gg == g) >= need
                             for g, need in group_need.items())
         else:
-            expr_pass = n_pass >= min_samples
+            expr_pass = sum(p for p, c in zip(passed, is_control) if not c) >= min_samples
+        if control_group:
+            # one read added to every library, in RPM, so a locus absent from the controls gets
+            # a finite value that grows with its expression
+            plus = [(c + 1) / library[s] * 1e6 if library.get(s) else 0.0
+                    for c, s in zip(per_sample, samples)]
+            case = [r for r, c in zip(plus, is_control) if not c]
+            ctl = [r for r, c in zip(plus, is_control) if c]
+            enrichment = (sum(case) / len(case)) / max(sum(ctl) / len(ctl), 1e-12)
+            enrich_pass = enrichment >= min_enrichment - 1e-9
+        else:
+            enrichment, enrich_pass = "", True
 
         ann = annotations.get(locus.genome)
         if ann:
@@ -392,7 +456,10 @@ def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs
             **annotation, "structural": struct, "exact_fraction": round(exact_fraction, 4),
             "expression_pass": int(expr_pass), "ends_pass": int(ends_pass),
             "structural_pass": int(struct_pass), "exact_pass": int(exact_pass),
-            "pass": int(candidate and expr_pass and ends_pass and struct_pass and exact_pass),
+            "enrichment": round(enrichment, 3) if enrichment != "" else "",
+            "enrichment_pass": int(enrich_pass),
+            "pass": int(candidate and expr_pass and ends_pass and struct_pass and exact_pass
+                        and enrich_pass),
         }
         for s, c, r, rg in zip(samples, per_sample, rpm, rpm_genome):
             row[f"count_{s}"] = round(c, 3)
@@ -422,7 +489,8 @@ LOCUS_COLUMNS = [
     "total_count", "background_count", "samples_passing_rpm", "five_score", "five_dominant_fraction",
     "five_jitter_fraction", "three_score", "three_dominant_fraction", "isolation", "annotation_class", "annotation_types",
     "annotation_names", "annotation_orientation", "structural", "exact_fraction",
-    "expression_pass", "ends_pass", "structural_pass", "exact_pass", "pass",
+    "expression_pass", "ends_pass", "structural_pass", "exact_pass", "enrichment",
+    "enrichment_pass", "pass",
     "cluster_id", "cluster_size", "cluster_count",
 ]
 READ_COLUMNS = ["locus_id", "read_id", "sequence", "start", "end", "weight", "count"]

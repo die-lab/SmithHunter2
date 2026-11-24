@@ -163,7 +163,7 @@ Studies (`prepare.py --study ...`; same layout, `FOCUS=<genome>` for `03_run.sh`
 | `buchnera_myzus` (Feng 2018, PRJNA395356) | *M. persicae* bacteriocytes vs gut of lines G002, G006, BTIRed; *Buchnera* G002 + pLeu. G006 runs paired with swapped mates: the mate with the 3' adapter is used | the gut holds 0.5% *Buchnera* reads (bacteriocytes 86%): 76 passing loci, 73 also in the bacteriocytes. Contamination, not misassignment: **not a clean negative** |
 | `cardinium` (Li 2018, PRJNA321074) | *B. tabaci* Q, Cardinium-infected vs uninfected, 2 + 2; *Portiera* as exclude genome | the "uninfected" line has more *Cardinium* reads (0.74% vs 0.57%), same exact fraction (0.71 vs 0.74): it carries Cardinium (or labels are swapped). **Not a usable negative** |
 | `mtb` (Furuse 2014, PRJNA248348) | *M. tuberculosis* H37Rv in THP-1 vs *C. trachomatis* in HeLa (the Chlamydia study reversed); host GRCh38; 19 RefSeq "putative small regulatory RNA" ncRNAs of H37Rv (`positive_mtb.tsv`, 4.5S excluded) | 5.9% Mtb reads. Defaults: 2,536 candidates, **11 false positives** (6 rRNA, 0.019% of the negative's reads on Mtb), 8 of 19 sRNAs (B55, mcr3, mcr11, mcr15, G2, MTS1338, B11, MTS2823) |
-| `legionella` (Furuse 2014) | *L. pneumophila* Philadelphia-1 in RAW 264.7 vs *M. marinum* / *M. smegmatis* in RAW; host GRCm39 | 2.7% Legionella reads. Defaults: 625 candidates, **3 false positives, all one 23S rRNA read** (3 operons). No positive set: Rfam has no *L. pneumophila* RsmY/RsmZ region, only 6S (structural) |
+| `legionella` (Furuse 2014) | *L. pneumophila* Philadelphia-1 in RAW 264.7 vs *M. marinum* / *M. smegmatis* in RAW; host GRCm39 | 2.7% Legionella reads. Defaults: 625 candidates, **3 false positives, all one 23S rRNA read** (3 operons). Positives added later (section 9, `positive_lpn.tsv`): 5 of 11 |
 
 Profile grid on the clean studies (candidates / passing in the negative / known sRNAs):
 
@@ -176,7 +176,7 @@ Profile grid on the clean studies (candidates / passing in the negative / known 
 | mite | 14 / 0 / 7542 | 14 / 0 / 7542 (group: 37 / 0 / +744) | 33 / 0 / 7542, 744 |
 | Chlamydia | 270 / **2** / **4 of 11** | 1,628 / 0 / 8 of 11 | 3,566 / 0 / 11 of 11 |
 | M. tuberculosis | – | 2,425 / 0 / 8 of 19 | 6,107 / 0 / 8 of 19 |
-| Legionella | – | 530 / 0 / – | 1,614 / 0 / – |
+| Legionella | – | 530 / 0 / 5 of 11 | 1,614 / 0 / 5 of 11 |
 
 v2 confirmed on two more studies run after the decision (2026-11-23): every false positive at
 defaults (11 Mtb, 3 Legionella) goes, no positive is lost. The 11 Mtb sRNAs missed by all
@@ -184,7 +184,7 @@ profiles are not threshold losses (`min_rpm` 2 recovers none): 4 have too few re
 MTS0858, AS1890, mcr16 ≤ 59 reads over 2 libraries), AS1726 has none, and 6 fall in
 **background** loci (F6, mcr10, MTS1082, ASpks, mcr7 with 208 reads, MTS2975): long sRNAs
 (mcr7 350 nt) degraded into scattered fragments with no dominant 5' end. Peak calling, not the
-filters, limits recall here; a "long transcript" locus class is a possible extension.
+filters, limits recall here (section 9: transcript loci).
 
 Decisions:
 - **`min_rpm_genome` off in both profiles.** In no study did it remove a false positive (they all
@@ -202,3 +202,72 @@ cross-talk): an explicit infected vs control comparison (enrichment per locus) i
 to try, on Buchnera gut and JW18 cross-talk. The *A. pisum* Buchnera benchmark with the Hansen &
 Degnan 2014 / Thairu & Hansen 2019 sRNAs waits for their supplementary tables (PMC refuses
 automated downloads).
+
+## 9. Transcript loci, enrichment over a control group, Legionella positives (2026-11-24)
+
+**Legionella positives** (`positive_lpn.tsv`, 11 sRNAs with Northern evidence: RsmY, RsmZ,
+LprA-D of Faucher 2010, five lpr of Weissenmayer 2011; the two 6S RNAs left out, structural):
+5 of 11 pass with both profiles (RsmY, RsmZ, lpr0003, lpr0010, lpr0017). LprA/B/D are background
+loci, LprC and lpr0049 below the threshold, lpr0069 has no read.
+
+**Transcript loci** (`loci.transcript_gap`, default 0 = off). The known small RNAs that no
+profile finds are not threshold losses: long or degraded RNAs (Mtb mcr7, 350 nt) have no
+dominant 5' end, and their reads are split into weak peaks and background fragments, each below
+the threshold (mcr7: about 250 sense reads in 20 loci). Promoting background loci alone
+recovers none of them. With `transcript_gap > 0`, chains of loci (peak and background) of one
+strand at most that far apart are added as `transcript` loci: quantified as a whole, they
+overlap the other loci and share their reads, and are **report only** (never `pass`; the funnel
+of the report and `evaluate` ignore them). Profile v2 precise + gap (infected: expressed
+transcript loci passing the structural and exact-read filters; negative: the same):
+
+| study | gap 10 | gap 30 | known sRNAs only in an expressed transcript locus (gap 10) |
+|---|---|---|---|
+| M. tuberculosis | 3,638 / 0 | 3,565 / 0 | F6, mcr7 |
+| Chlamydia | 1,860 / 0 | 1,563 / 0 | ihtA, ctrR5 (gap 30: + ctrR2) |
+| Legionella | 1,469 / 0 | 1,691 / 0 | LprA, LprB, LprC (sensitive) |
+| Aag2 | 1,279 / 0 | 1,068 / 0 | WsnRNA-46 |
+| JW18 | 2,125 / 0 | 1,523 / 0 | – |
+| wAlbB | 299 / 0 | 343 / 0 | – |
+| mite | 21 / 0 | 23 / 0 | WsnRNA-744 |
+| ovary | 1 / 0 | 1 / 0 | – |
+
+Six known small RNAs missed as candidates appear as expressed transcript loci, and no clean
+negative has one after the structural and exact-read filters. The price is volume: most
+transcript loci are mRNA fragments (CDS sense 55-90%), and a chain can run into the neighbouring
+gene (LprB: 7 reads of its own). Decision: report only, off by default, `transcript_gap: 10` in
+`symbiont_sensitive` as a list to inspect, not candidates.
+
+**Enrichment over a control group** (`loci.control_group`, `loci.min_enrichment`). With the
+symbiont-free libraries in the same run (`group` column of the samples table), expression is
+judged on the other samples only, and `enrichment` = mean RPM of the others / mean RPM of the
+controls, one read added to every library. Tested by merging the infected and tet runs of each
+study (`benchmarks/wolbachia_multi/merge_runs.py`: same reference, reads matched by sequence,
+focus-genome reads only). Passing loci by enrichment:
+
+| study | defaults: passing / enrichment < 2 | v2 precise: passing / < 2 | lost known sRNAs at 2 / 4 / 10 |
+|---|---|---|---|
+| M. tuberculosis | 2,534 / 2 (rRNA) | 2,424 / 0 | 0 / 0 / 0 |
+| Chlamydia | 1,836 / 4 (rRNA) | 1,627 / 0 | 0 / 0 / 0 |
+| Legionella | 631 / 6 (rRNA) | 530 / 0 | 0 / 0 / 0 |
+| mite | 22 / 2 (tRNA) | 14 / 0 | 0 / 0 / 0 |
+| JW18, Aag2, wAlbB, ovary | no locus below 10 | no locus below 10 | 0 |
+| Buchnera (gut 0.5%) | 2,022 / 0 | 1,784 / 0 | – |
+| Cardinium | 63 / **63** | 30 / **30** | – |
+
+- Real symbiont loci have enrichment ≥ 10 everywhere; the loci below 2 are rRNA / tRNA whose
+  signal is the control's reads (the false positives of the tet-alone analysis), so at defaults
+  `min_enrichment: 2` removes them without the annotation, and loses no known sRNA.
+- Under profile v2 nothing is left to remove: the filter is a second, annotation-free line of
+  defence (genomes without rRNA/tRNA annotation, other bacteria on unannotated conserved
+  sequence).
+- Cardinium: every passing locus has enrichment 0.4-1.9, the measure of the problem found in
+  section 8 (the "uninfected" line carries Cardinium). The filter turns a bad negative into an
+  explicit warning instead of silent candidates.
+- Buchnera gut contamination is not caught (bacteriocytes 86% vs gut 0.5%: enrichment > 10), as
+  expected: those are real Buchnera small RNAs.
+
+Decision: off by default (needs a control group, dataset-specific); recommended
+`min_enrichment: 2` whenever symbiont-free libraries are in the run.
+
+Regression fixtures `tests/data/mtb_{infected,tet}` pin the Mtb results (8 of 19 with both
+profiles, the false positives of the negative and their removal, mcr7 / F6 as transcript loci).

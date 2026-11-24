@@ -102,6 +102,10 @@ def section_loci(run: Run, label: str) -> str:
     rows = [["loci in loci.tsv (all types)", len(loci)]]
     rows += [[f"  locus_type = {t}", n] for t, n in sorted(types.items())]
     rows += [["peak loci passing expression", expr], ["peak loci passing ends + isolation", ends]]
+    tx = [r for r in loci if r["locus_type"] == "transcript"]
+    if tx:   # report only (loci.transcript_gap > 0), never candidates
+        rows.append(["transcript loci passing expression (report only)",
+                     sum(r["expression_pass"] == "1" for r in tx)])
     for col, label in (("structural_pass", "structural filter"), ("exact_pass", "exact-read filter")):
         if peak and col in peak[0]:
             rows.append([f"peak loci passing the {label}", sum(r[col] == "1" for r in peak)])
@@ -214,7 +218,7 @@ def why_failed(r: dict) -> str:
         return "pass"
     reasons = []
     if r["locus_type"] != "peak":
-        reasons.append("background locus")
+        reasons.append(f"{r['locus_type']} locus")
     if r["expression_pass"] != "1":
         reasons.append(f"expression ({r['samples_passing_rpm']} samples)")
     if r["ends_pass"] != "1":
@@ -229,11 +233,16 @@ def why_failed(r: dict) -> str:
 def section_positive(runs: list[tuple[str, Run]], positive: Path) -> str:
     """Known small RNAs (TSV: name, contig, start, end, strand; 1-based): best locus per line."""
     rows = []
+    expressed_tx: dict[str, list[str]] = {}
     for known in read_tsv(positive):
         q = {"contig": known["contig"], "start": known["start"], "end": known["end"],
              "strand": known["strand"]}
         for label, run in runs:
-            hits = [r for r in run.loci if overlaps(r, q)]
+            all_hits = [r for r in run.loci if overlaps(r, q)]
+            hits = [r for r in all_hits if r["locus_type"] != "transcript"]   # overlap the others
+            if any(r["locus_type"] == "transcript" and r["expression_pass"] == "1" for r in all_hits) \
+                    and not any(r["pass"] == "1" for r in hits):
+                expressed_tx.setdefault(label, []).append(known["name"])
             passing = [r for r in hits if r["pass"] == "1"]
             best = max(passing or hits, key=lambda r: float(r["total_count"]), default=None)
             reads = sum(float(r["total_count"]) for r in hits)
@@ -244,7 +253,9 @@ def section_positive(runs: list[tuple[str, Run]], positive: Path) -> str:
                              f"{best['rep_sequence']} ({fmt(float(best['total_count']))})", why_failed(best)])
     return ("## Positive control (known small RNAs)\n\nLoci overlapping each region on its strand; "
             "the best is the passing locus with most reads, or the locus with most reads.\n\n"
-            + table(["small RNA", "line", "loci", "reads", "best locus", "sequence (reads)", "status"], rows) + "\n")
+            + table(["small RNA", "line", "loci", "reads", "best locus", "sequence (reads)", "status"], rows) + "\n"
+            + "".join(f"\nNot passing, but in an expressed transcript locus ({label}; report only): "
+                      f"{len(names)}: {', '.join(names)}\n" for label, names in expressed_tx.items()))
 
 
 def main() -> None:

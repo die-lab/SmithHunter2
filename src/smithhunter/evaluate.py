@@ -72,7 +72,9 @@ def is_target(row: dict) -> bool:
 
 def evaluate(truth_dir: str, results_dir: str):
     features = read_tsv(f"{truth_dir}/features.tsv")
-    loci = read_tsv(f"{results_dir}/discovery/loci.tsv")
+    # transcript loci (loci.transcript_gap) overlap the other loci: report only, not scored
+    loci = [l for l in read_tsv(f"{results_dir}/discovery/loci.tsv")
+            if l.get("locus_type") != "transcript"]
     contigs = {(c["genome"], c["contig"]): (int(c["length"]), c["circular"] == "1")
                for c in read_tsv(f"{results_dir}/reference/contigs.tsv")}
     focus = {g["name"] for g in read_tsv(f"{results_dir}/reference/genomes.tsv")
