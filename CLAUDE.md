@@ -8,12 +8,9 @@ Context for anyone (human or Claude) continuing this project. Read this first.
 - The maintainer co-authored the original SmithHunter (ESZlab).
 - `die-lab/SmithHunter` is an earlier experimental rewrite: it is NOT the original and
   must not be used as a model. The original is https://github.com/ESZlab/SmithHunter.
-- The pipeline must run on a Linux server (university machine, VPN + SSH). Development happens
-  there through the Claude Code extension for VS Code (Remote-SSH). Direct calls from the
-  server to api.anthropic.com are blocked, GitHub works. Ask before launching heavy jobs:
-  the machine is shared.
-- Development so far was done on a Windows PC without Python; module A was verified only
-  through GitHub Actions. First thing on the server: create the env and run `.test`.
+- The pipeline must run on a Linux machine that is shared with other users: ask before launching
+  heavy jobs. Development so far was done on a Windows PC without Python; module A was verified
+  only through GitHub Actions. First thing on the target machine: create the env and run `.test`.
 - Plan with literature review: https://claude.ai/artifact/D5movNUPfevGUTpjd3qiPP
 
 ## Goal
@@ -57,7 +54,7 @@ variable `three_score` in the filter.
 
 - Module A implemented: `collapse`, `build-ref`, `assign`, `discover` subcommands
   (`python -m smithhunter`), Snakemake rules in `workflow/rules/`.
-- Verified on the server (2026-10-09): env `smithhunter2` in `~/miniforge3`, `.test` runs end to end.
+- Verified on Linux (2026-10-09): env `smithhunter2`, `.test` runs end to end.
   The `.test` reads are random reads from a real sample: they only show that the workflow runs.
 - `simulate` / `evaluate` subcommands: simulated library with known truth (isomiRs, non-templated
   tails, errors, degradation, tRFs, NUMTs, origin-spanning locus, close/overlapping pairs, SNP,
@@ -74,14 +71,14 @@ variable `three_score` in the filter.
 
 ## Report and v0 comparison (2026-10-28)
 
-- Reporting layer adapted from the colleague's `~/14_SmithHunther2/smithhunter24` (a faithful
+- Reporting layer adapted from a colleague's v0 port (a faithful
   Snakemake port of v0 module A, not under git): `report.py` + `funnel` / `coverage` subcommands,
   `workflow/rules/report.smk`, R scripts in `workflow/scripts/`. `read_funnel.tsv` and
   `provenance.yaml` are in rule `all` (stdlib only); plots and MultiQC are rule `report`
-  (envs `r.yaml`, `multiqc.yaml`; tested on the server by putting the colleague's existing R and
+  (envs `r.yaml`, `multiqc.yaml`; tested by putting existing R and
   MultiQC envs on PATH instead of creating new ones). The "Found 1 samples" line of MultiQC for
   the origin bar graph counts datasets: the plot has every sample.
-- v0 comparison on `.test` in `~/THE_CAPTAIN/compare_v0_20261024` (a copy of the colleague's
+- v0 comparison on `.test` (a copy of the colleague's
   pipeline with the adapters set: with `adapter_r1: null` fastp autodetection left the adapter
   on most reads). Their 30 candidates: 15 match or overlap our 25 passing loci, 15 fail our
   filters (mostly ends/isolation). 15 of ours are not theirs, e.g. `mito_00356` (812 reads,
@@ -108,11 +105,9 @@ variable `three_score` in the filter.
 - RNA tools were in a separate env `smithhunter2-rna`: installing them into `smithhunter2`
   (Python 3.14) silently gave IntaRNA 1.2.5 and ViennaRNA 2.4.7 (py27). Fixed 2026-11-17:
   `environment.yml` pins Python < 3.14 with minimum tool versions; it solves (micromamba) to
-  python 3.13, IntaRNA 3.4.1, RNAhybrid 2.1.2, ViennaRNA 2.7.2. On the server: recreate
+  python 3.13, IntaRNA 3.4.1, RNAhybrid 2.1.2, ViennaRNA 2.7.2. Recreate
   `smithhunter2` from it, then `smithhunter2-rna` can go.
-- Pushing: `git push git@github.com:die-lab/SmithHunter2.git main` (SSH; the HTTPS remote has no
-  credentials). Repo-local `user.email` is thepokemonmuia@gmail.com (the other address is blocked
-  by GitHub email privacy). `gh` is not installed: CI status via
+- `gh` is not installed: CI status via
   `curl https://api.github.com/repos/die-lab/SmithHunter2/actions/runs?per_page=3`.
 
 ## Genome-choice modes (added 2026-10-27) - READ BEFORE TOUCHING `assign.py`
@@ -142,7 +137,7 @@ nuclear genome even when it fit the focus genome better.
 
 ## Module B steps 2-3 and benchmark extensions (2026-11-17, branch `module-b-step2`)
 
-Done in a cloud session (micromamba env, not on the server). Details and deviations from the
+Done in a cloud session (micromamba env, not on the usual machine). Details and deviations from the
 design in `docs/module_b_design.md` section 10.
 - `score-sites` (rule `score_sites`, in target `targets`): IntaRNA + RNAhybrid per site, z-scores
   against the candidate's own decoys (decoys leave-one-decoy-out), pooled q-values per class with a
@@ -173,7 +168,7 @@ design in `docs/module_b_design.md` section 10.
 
 ## Next steps
 
-1. On the server: recreate the env from `environment.yml`, run pytest, `.test`, and the simulation
+1. Recreate the env from `environment.yml`, run pytest, `.test`, and the simulation
    with `targets precursors`; then module B on `.test` (needs a target set: a nuclear genome + GFF3).
 2. Maintainer decisions: stricter evil (above); `severe`/`evil` discarding ties between two focus
    genomes; whether supplementary-pairing sites should be detectable (they are not now).
@@ -187,7 +182,7 @@ design in `docs/module_b_design.md` section 10.
 ## Commands
 
 ```bash
-source ~/miniforge3/etc/profile.d/conda.sh && conda activate smithhunter2
+conda activate smithhunter2
 pytest                                            # unit tests (repo root)
 cd .test && snakemake -s ../workflow/Snakefile --cores 2   # integration test (module A)
 snakemake -s ../workflow/Snakefile --cores 2 --sdm conda report   # plots + MultiQC (from .test)
