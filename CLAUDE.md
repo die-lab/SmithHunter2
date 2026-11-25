@@ -1,6 +1,6 @@
 # SmithHunter2 – development notes
 
-> **Resuming? Start with `docs/HANDOFF.md`** (state, running jobs, ordered next steps, server rules),
+> **Resuming? Start with `docs/HANDOFF.md`** (state, running jobs, ordered next steps),
 > then `docs/module_b_development_log.md`. The notes below are older.
 
 Context for anyone (human or Claude) continuing this project. Read this first.
@@ -11,12 +11,9 @@ Context for anyone (human or Claude) continuing this project. Read this first.
 - The maintainer co-authored the original SmithHunter (ESZlab).
 - `die-lab/SmithHunter` is an earlier experimental rewrite: it is NOT the original and
   must not be used as a model. The original is https://github.com/ESZlab/SmithHunter.
-- The pipeline must run on a Linux server (university machine, VPN + SSH). Development happens
-  there through the Claude Code extension for VS Code (Remote-SSH). Direct calls from the
-  server to api.anthropic.com are blocked, GitHub works. Ask before launching heavy jobs:
-  the machine is shared.
-- Development so far was done on a Windows PC without Python; module A was verified only
-  through GitHub Actions. First thing on the server: create the env and run `.test`.
+- The pipeline must run on a Linux machine that is shared with other users: ask before launching
+  heavy jobs. Development so far was done on a Windows PC without Python; module A was verified
+  only through GitHub Actions. First thing on the target machine: create the env and run `.test`.
 - Plan with literature review: https://claude.ai/artifact/D5movNUPfevGUTpjd3qiPP
 
 ## Goal
@@ -60,7 +57,7 @@ variable `three_score` in the filter.
 
 - Module A implemented: `collapse`, `build-ref`, `assign`, `discover` subcommands
   (`python -m smithhunter`), Snakemake rules in `workflow/rules/`.
-- Verified on the server (2026-10-09): env `smithhunter2` in `~/miniforge3`, `.test` runs end to end.
+- Verified on Linux (2026-10-09): env `smithhunter2`, `.test` runs end to end.
   The `.test` reads are random reads from a real sample: they only show that the workflow runs.
 - `simulate` / `evaluate` subcommands: simulated library with known truth (isomiRs, non-templated
   tails, errors, degradation, tRFs, NUMTs, origin-spanning locus, close/overlapping pairs, SNP,
@@ -76,14 +73,14 @@ variable `three_score` in the filter.
 
 ## Report and v0 comparison (2026-10-28)
 
-- Reporting layer adapted from the colleague's `~/14_SmithHunther2/smithhunter24` (a faithful
+- Reporting layer adapted from a colleague's v0 port (a faithful
   Snakemake port of v0 module A, not under git): `report.py` + `funnel` / `coverage` subcommands,
   `workflow/rules/report.smk`, R scripts in `workflow/scripts/`. `read_funnel.tsv` and
   `provenance.yaml` are in rule `all` (stdlib only); plots and MultiQC are rule `report`
-  (envs `r.yaml`, `multiqc.yaml`; tested on the server by putting the colleague's existing R and
+  (envs `r.yaml`, `multiqc.yaml`; tested by putting existing R and
   MultiQC envs on PATH instead of creating new ones). The "Found 1 samples" line of MultiQC for
   the origin bar graph counts datasets: the plot has every sample.
-- v0 comparison on `.test` in `~/THE_CAPTAIN/compare_v0_20261024` (a copy of the colleague's
+- v0 comparison on `.test` (a copy of the colleague's
   pipeline with the adapters set: with `adapter_r1: null` fastp autodetection left the adapter
   on most reads). Their 30 candidates: 15 match or overlap our 25 passing loci, 15 fail our
   filters (mostly ends/isolation). 15 of ours are not theirs, e.g. `mito_00356` (812 reads,
@@ -110,9 +107,7 @@ variable `three_score` in the filter.
 - RNA tools are installed in a separate env `smithhunter2-rna` (IntaRNA 3.4.1, RNAhybrid 2.1.2,
   ViennaRNA 2.7.2; recipe `workflow/envs/rna.yaml`). Installing them into `smithhunter2`
   (Python 3.14) silently gave IntaRNA 1.2.5 and ViennaRNA 2.4.7 (py27), so they were removed.
-- Pushing: `git push git@github.com:die-lab/SmithHunter2.git main` (SSH; the HTTPS remote has no
-  credentials). Repo-local `user.email` is thepokemonmuia@gmail.com (the other address is blocked
-  by GitHub email privacy). `gh` is not installed: CI status via
+- `gh` is not installed: CI status via
   `curl https://api.github.com/repos/die-lab/SmithHunter2/actions/runs?per_page=3`.
 
 ## Genome-choice modes (added 2026-10-27) - READ BEFORE TOUCHING `assign.py`
@@ -148,9 +143,9 @@ nuclear genome even when it fit the focus genome better.
   faked, real-tool tests skipped when the tools are not on PATH) and `tests/test_validate.py`.
 - Single environment is back: dry solve of `environment.yml` (python>=3.10,<3.14 + intarna,
   rnahybrid, viennarna) gives python 3.13, IntaRNA 3.4.1, RNAhybrid 2.1.2, ViennaRNA 2.7.2.
-  NOT yet created for real (it would install under ~/miniforge3, outside THE_CAPTAIN); `smithhunter2-rna`
+  NOT yet created for real; `smithhunter2-rna`
   still works and can be dropped after creating it.
-- Tool facts checked on the server: IntaRNA ranges are `from-to`; `--tRegion` must contain the
+- Tool facts checked on the real tools: IntaRNA ranges are `from-to`; `--tRegion` must contain the
   whole interaction (guide reach), so the seed is pinned with `--seedTRange`; IntaRNA output has
   `id1` = target, `id2` = query. RNAhybrid `-f` counts from the 5' end of the guide; it returns
   `mfe 0.0 p 1.0` when the helix constraint cannot be met (treated as no interaction). RNAcalibrate
@@ -180,13 +175,10 @@ nuclear genome even when it fit the focus genome better.
   (autouse fixture) so checkpoints never leak between tests. Developing while a long job runs: copy
   `src` and `tests` to `.scratch_solve/dev` and give it its own `pytest.ini` (the repo's
   `pyproject.toml` otherwise puts the repo `src` first on the path); deploy after the tests pass.
-- Costs measured on the shared server: IntaRNA 0.14 s/site (flank 150), 0.05 s (flank 60);
+- Costs measured on a loaded machine: IntaRNA 0.14 s/site (flank 150), 0.05 s (flank 60);
   RNAhybrid 0.009 s/site. Hence `intarna_flank` default 100 and the two-stage `intarna_prefilter`.
-- Calibration data for bacterial -> host small RNAs: `~/THE_CAPTAIN/calib_bacterial_rnai`, with
+- Calibration data for bacterial -> host small RNAs: `calib_bacterial_rnai/` (outside the repository), with
   `README.md` there (what was chosen and why, accessions, download state).
-- Rule for this server: never write outside THE_CAPTAIN, also not to /tmp (pytest: use
-  `--basetemp` inside THE_CAPTAIN; conda: `CONDA_PKGS_DIRS` inside THE_CAPTAIN; `pkill -f` can
-  kill your own ssh shell: kill by pid after checking `/proc/<pid>/cwd`).
 
 ## Next steps
 
@@ -202,7 +194,7 @@ nuclear genome even when it fit the focus genome better.
 ## Commands
 
 ```bash
-source ~/miniforge3/etc/profile.d/conda.sh && conda activate smithhunter2
+conda activate smithhunter2
 pytest                                            # unit tests (repo root)
 cd .test && snakemake -s ../workflow/Snakefile --cores 2   # integration test (module A)
 snakemake -s ../workflow/Snakefile --cores 2 --sdm conda report   # plots + MultiQC (from .test)

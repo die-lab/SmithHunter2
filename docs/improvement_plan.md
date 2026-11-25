@@ -28,12 +28,12 @@ What the first real positive control (40 human miRNAs, 2,673 reporter-validated 
 | `bactmode` | implement the `bacterial` mode end to end (start-codon windows, IntaRNA only, window-level q-values) | patch + tests + docs section | unit tests and a synthetic planted-pair check with the real tool | 2 workers |
 | `bactdata` | build the bacterial validation set (E. coli K-12 trans-encoded sRNAs with validated targets, sources for every pair) | `calib_bacterial_rnai/bact_ecoli/` (genome, candidates, truth, SOURCES.md) | >= 30 pairs from >= 10 sRNAs, each with a verified source, uncertain ones flagged | none |
 | `transfect` | a second positive control WITH negatives: miRNA transfection expression changes; evaluation script | data + `evaluate_repression.py` + a first result | >= 8 miRNAs with per-gene log2FC from a cited public dataset; result vs the site-count baseline | 4 workers |
-| `verify` | reproducibility: build the single environment, run the whole test suite, the CI simulation and a workflow dry run from a clean state; check README commands | report with exact commands and discrepancies | environment solves and installs inside THE_CAPTAIN; tests and CI simulation pass | 2 workers |
+| `verify` | reproducibility: build the single environment, run the whole test suite, the CI simulation and a workflow dry run from a clean state; check README commands | report with exact commands and discrepancies | environment solves and installs inside the working area; tests and CI simulation pass | 2 workers |
 
 ## Rules for every agent
 
-Write only inside THE_CAPTAIN (never `/tmp`, never the home config, no installs into
-`~/miniforge3`); the repository is read-only for agents (work in
+Write only inside the working area (never `/tmp`, never the home config, no installs into
+the shared conda); the repository is read-only for agents (work in
 `SmithHunter2/.scratch_solve/agents/<id>/`); `nice -n 10`; check `uptime` before heavy jobs
 (wait when the load is above 40); kill only your own processes, never with `pkill -f`; do not
 touch the running jobs `run_mirna` and `run_wolb_cds`; report negative results as results.

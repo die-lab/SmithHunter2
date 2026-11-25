@@ -6,35 +6,28 @@ what is still running or half done, and what to do next, in order. Companion doc
 corrections, open questions), `docs/improvement_plan.md` (the agent plan), `CLAUDE.md`
 (older development notes), `calib_bacterial_rnai/README.md` (data and calibration runs).
 
-## 0. Rules that apply to everything (from the user's global instructions)
+## 0. Rules that apply to everything
 
-- Server: connect with the ssh command in your global instructions (the `^` in the user name is
-  part of the name); all work happens in `~/THE_CAPTAIN` on the server. (The connection details are
-  deliberately not in this file because the repository is public; the copy
-  `~/THE_CAPTAIN/HANDOFF_SmithHunter2.md` outside the repository has them.)
-- **Write only inside `THE_CAPTAIN`** (also not to `/tmp`, `~/.cache`, `~/.conda`, `~/miniforge3`);
-  outside it is read-only. Anything outside needs the user's explicit confirmation THREE times,
-  in three separate messages. Use absolute paths. `pytest` needs `--basetemp` inside THE_CAPTAIN
-  and `-p no:cacheprovider`; conda needs `CONDA_PKGS_DIRS` inside THE_CAPTAIN; export `TMPDIR`
-  inside THE_CAPTAIN.
-- The server is shared (64 cores, load 45-60 most of the time): `nice -n 10`, ask before heavy
-  jobs, never `pkill -f` (it kills your own ssh shell); kill by PID after checking `/proc/<pid>/cwd`.
-- ssh quoting: apostrophes inside a single-quoted ssh command break it; put scripts in a file
-  and pipe it (`ssh ... 'bash -s' < script.sh`). Backslash-n inside text sent through some tools
-  becomes a real newline: build such strings with `chr(10)` or edit with an editor tool.
-- Do not commit or push without being asked. The user's commit e-mail is the repo-local
-  `thepokemonmuia@gmail.com`; commit trailer: `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`.
+- Work happens on a Linux machine shared with other users: `nice -n 10`, ask before heavy jobs, never
+  `pkill -f` (kill by PID after checking `/proc/<pid>/cwd`).
+- Write only inside the designated working area (not `/tmp`, home caches or shared conda installs); use
+  absolute paths. `pytest` needs `--basetemp` and `-p no:cacheprovider`; conda needs a package cache
+  inside the working area.
+- Connection details and machine-specific rules are deliberately not in this repository (it is public);
+  keep them in a private note.
+- Do not commit or push without being asked. Commit trailer:
+  `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`.
 - The focus genome of a study is the organism the paper is about (not always mitochondrial);
   test the bacterial side as much as the mitochondrial one.
 
 ## 1. Where things are
 
-| what | path (under `~/THE_CAPTAIN`) |
+| what | location (working area) |
 |---|---|
 | repository (git) | `SmithHunter2/` branch **`module-b-step2`**, commit `ceeb274` (24 files), **not pushed**; `main` untouched (`bf4c098`) |
 | calibration data, runs, truth files | `calib_bacterial_rnai/` (24 GB; see its README) |
 | clean single environment (built by an agent, Python 3.13, IntaRNA 3.4.1, RNAhybrid 2.1.2, ViennaRNA 2.7.2) | `envs/sh2_clean` (package cache `envs/pkgs_clean`; an agent used `HOME=envs/fakehome` to keep mamba from writing to `~/.conda`) |
-| existing user envs | `~/miniforge3/envs/smithhunter2` (Python 3.14, no RNA tools) and `smithhunter2-rna` (the tools); activate both: `PATH=$HOME/miniforge3/envs/smithhunter2/bin:$HOME/miniforge3/envs/smithhunter2-rna/bin:$PATH` |
+| existing user envs | `<conda>/envs/smithhunter2` (Python 3.14, no RNA tools) and `smithhunter2-rna` (the tools); activate both: `PATH=<conda>/envs/smithhunter2/bin:<conda>/envs/smithhunter2-rna/bin:$PATH` |
 | agent working copies and deliveries | `SmithHunter2/.scratch_solve/agents/<id>/` (git-ignored, ~900 MB with dev copies) |
 | simulations | `sim_ci_clean/`, `sim_step2_ext/`, `sim_step2_test/` |
 
@@ -147,8 +140,8 @@ Not started by decision: precursor folding (step 3), report plots for module B, 
 
 ```bash
 # environment for the user envs
-export PATH=$HOME/miniforge3/envs/smithhunter2/bin:$HOME/miniforge3/envs/smithhunter2-rna/bin:$PATH
-cd ~/THE_CAPTAIN/SmithHunter2; export PYTHONPATH=src
+export PATH=<conda>/envs/smithhunter2/bin:<conda>/envs/smithhunter2-rna/bin:$PATH
+cd SmithHunter2; export PYTHONPATH=src
 python -m smithhunter score-sites --help          # --dry-run counts the sites first
 python -m smithhunter validate-targets --targets T --truth PAIRS --regions R --out OUT
 python -m smithhunter decoys --decoy-mode shuffle|match_seed_gc|keep_seed ...
@@ -161,9 +154,9 @@ calib_bacterial_rnai/truth/*.tsv                                       # PA14 sR
 
 ## 7. Message to paste in a new chat
 
-"Resume SmithHunter2 module B. Read ~/THE_CAPTAIN/SmithHunter2/docs/HANDOFF.md first, then
+"Resume SmithHunter2 module B. Read docs/HANDOFF.md first, then
 docs/module_b_development_log.md. Check the running jobs and agent deliveries in section 4, then
-follow section 5 in order. Follow the server rules in section 0 (write only inside THE_CAPTAIN)."
+follow section 5 in order. Follow the rules in section 0."
 
 ## 8. Status update 2026-11-11 (later session; supersedes section 4/5 where they differ)
 
@@ -181,7 +174,7 @@ follow section 5 in order. Follow the server rules in section 0 (write only insi
   0.124, AUC 0.93 / 0.88, support 0, best q 0.64, one validated pair) and miRNA keep_seed (AUC
   RNAhybrid 0.7908, IntaRNA 0.557 on the 15% prefiltered, still only 2 supported sites): the decoy
   mode does not rescue site-level power, so finding 2 stands. Not yet written into the log (D6, section 3).
-- Tests need a SHORT `TMPDIR` (e.g. `~/THE_CAPTAIN/tt`), otherwise AF_UNIX forkserver paths are too long.
+- Tests need a SHORT `TMPDIR` (e.g. `tt`), otherwise AF_UNIX forkserver paths are too long.
 - Next: step 1 write-up in the log, step 3 (verify discrepancies), re-run `predictors` and `genelevel`,
   then step 4 (ask the user about CPU first).
 
@@ -192,7 +185,7 @@ follow section 5 in order. Follow the server rules in section 0 (write only insi
   which conflicted), structural RNA flag/filter, benchmark tooling, `min_rpm_genome`,
   `exact_fraction` / `min_exact_fraction`.
 - Everything about data, findings and decisions is in `docs/module_a_benchmarks.md`.
-- Server data (all inside THE_CAPTAIN): `bench_walbb/` (wAlbB, PRJNA671731), `bench_aag2/`
+- Benchmark data (outside the repository, in the working area): `bench_walbb/` (wAlbB, PRJNA671731), `bench_aag2/`
   (Aag2 +/- wMelPop, PRJNA238976), `bench_wolb/{jw18,ovary,mite}/` (+ `dmel_data/` shared genomes);
   each with `variants/<name>/` from `05_variants.py`. Grid logs in `tt/grid*.log`.
 - New options (all default off, results unchanged): `loci.exclude_structural`,

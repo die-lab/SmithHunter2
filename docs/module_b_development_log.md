@@ -3,7 +3,7 @@
 Living document. It records *why* module B is built the way it is, what has been checked and
 how, what failed, and what is still open, so that the final documentation can be written from
 it and every claim can be traced to a test, a run or a source. Started 2026-11-10 (step 2).
-Reproduction details for each experiment are in `~/THE_CAPTAIN/calib_bacterial_rnai/README.md`.
+Reproduction details for each experiment are in `calib_bacterial_rnai/README.md`.
 
 ## 0. Principles
 
@@ -107,7 +107,7 @@ validate-targets: rank / percentile / AUC of validated pairs among all genes
 - My first baseline put unscored genes strictly last while `validate-targets` gives them the mean
   tail rank (0.715 vs 0.79 for the same score). Both now use the tie rule; they agree to 3 decimals.
 - Worker CPU was measured at the wrong process level (Python 3.14 uses forkserver).
-- Scratch files went to `/tmp` once (deleted); everything since stays in THE_CAPTAIN.
+- Scratch files went to `/tmp` once (deleted); everything since stays in the working area.
 
 ## 5. Open questions (to close before the tool is called finished)
 

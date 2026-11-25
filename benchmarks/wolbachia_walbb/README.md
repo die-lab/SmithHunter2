@@ -9,12 +9,12 @@ line WB2 (wAlbB-infected) and WB2.tet (same line, tetracycline-cleared), 3 pools
 = 9 libraries per line, HiSeq 2500 SE 50. Genomes: wAlbB NZ_CP031221.1 (focus, circular, NCBI
 GFF3), AaegL5.0 GCF_002204515.2 split into nuclear and mito NC_035159.1 (both exclude).
 
-## Run (on the server)
+## Run
 
 Ask before steps 3-4: they are heavy and the machine is shared.
 
 ```bash
-source ~/miniforge3/etc/profile.d/conda.sh && conda activate smithhunter2
+conda activate smithhunter2
 B=benchmarks/wolbachia_walbb          # from the repo root
 export BENCH=~/bench_walbb            # data and results live here, outside the repo
 
