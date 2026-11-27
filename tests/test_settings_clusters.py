@@ -39,8 +39,6 @@ def test_main_config_defaults_match_the_settings():
     for flag, section, key, default in DISCOVER_SETTINGS:
         if key in (cfg.get(section) or {}):
             got = cfg[section][key]
-            if key == "min_count":   # the workflow default (5) is stricter than the CLI one (1)
-                continue
             assert got == default, f"{section}.{key}: config {got!r}, settings {default!r}"
 
 

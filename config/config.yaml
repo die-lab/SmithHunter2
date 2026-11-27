@@ -73,7 +73,7 @@ loci:
   min_enrichment: 0      # with control_group: mean RPM others / controls (+1 read per library)
   multimap: fractional   # fractional | unique (within one genome)
   min_rpm: 5             # reads per million (library total) in one sample
-  min_count: 5           # and at least this many reads in that sample
+  min_count: 5           # and at least this many reads above background in that sample
   min_rpm_genome: 0      # and per million reads of the locus' genome in that sample (0 = off)
   min_samples: null      # samples that must reach min_rpm; null -> number of samples - 1
   min_samples_scope: all # all | group: min_samples within one group (samples.tsv column `group`)

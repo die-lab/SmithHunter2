@@ -11,7 +11,7 @@ DISCOVER_SETTINGS = [
     ("--merge-gap", "loci", "merge_gap", 0),
     ("--min-rpm", "loci", "min_rpm", 5),
     ("--min-rpm-genome", "loci", "min_rpm_genome", 0),
-    ("--min-count", "loci", "min_count", 1),
+    ("--min-count", "loci", "min_count", 5),
     ("--min-samples", "loci", "min_samples", None),
     ("--peak-window", "loci", "peak_window", 2),
     ("--peak-pvalue", "loci", "peak_pvalue", 0.001),

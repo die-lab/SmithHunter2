@@ -374,7 +374,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--min-rpm-genome", type=float, default=0.0,
                    help="also per million reads assigned to the locus' genome in the sample "
                         "(0 = off); follows the load of a symbiont")
-    s.add_argument("--min-count", type=float, default=1)
+    s.add_argument("--min-count", type=float, default=5)
     s.add_argument("--min-samples", type=int, default=None)
     s.add_argument("--min-samples-scope", default="all", choices=["all", "group"],
                    help="group: min_samples within at least one group of --samples-table "
