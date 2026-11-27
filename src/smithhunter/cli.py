@@ -295,7 +295,7 @@ def main(argv=None):
     s.add_argument("--contigs", required=True)
     s.add_argument("--merge-gap", type=int, default=0)
     s.add_argument("--min-rpm", type=float, default=5.0)
-    s.add_argument("--min-count", type=float, default=1)
+    s.add_argument("--min-count", type=float, default=5)
     s.add_argument("--min-samples", type=int, default=None)
     s.add_argument("--no-peaks", action="store_true",
                    help="loci are whole blocks of overlapping reads (no 5' peak splitting)")

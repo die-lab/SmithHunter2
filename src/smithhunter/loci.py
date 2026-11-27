@@ -194,7 +194,7 @@ def load_counts(path: str):
 
 
 def discover(alignments_path, counts_path, libraries_path, genomes_path, contigs_path,
-             merge_gap=0, min_rpm=5.0, min_count=1, min_samples=None, n_thre=0.5, penalty=0.1,
+             merge_gap=0, min_rpm=5.0, min_count=5, min_samples=None, n_thre=0.5, penalty=0.1,
              min_five=0.5, min_three=0.0, peaks=True, peak_window=2, peak_pvalue=0.001,
              background_flank=50, satellite_distance=10, satellite_fraction=0.1,
              min_isolation=0.5, five_filter="dominant", min_five_fraction=0.5, five_jitter=1):

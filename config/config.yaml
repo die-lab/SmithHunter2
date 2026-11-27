@@ -68,7 +68,7 @@ loci:
   satellite_fraction: 0.1  # ... with less than this share of its reads joins it
   multimap: fractional   # fractional | unique (within one genome)
   min_rpm: 5             # reads per million (library total) in one sample
-  min_count: 5           # and at least this many reads in that sample
+  min_count: 5           # and at least this many reads above background in that sample
   min_samples: null      # samples that must reach min_rpm; null -> number of samples - 1
 
 ends:

@@ -18,7 +18,7 @@ rule discover:
     params:
         merge_gap=LOCI.get("merge_gap", 0),
         min_rpm=LOCI.get("min_rpm", 5),
-        min_count=LOCI.get("min_count", 1),
+        min_count=LOCI.get("min_count", 5),
         min_samples=min_samples_arg(),
         peaks="" if LOCI.get("peaks", True) else "--no-peaks",
         peak_window=LOCI.get("peak_window", 2),
